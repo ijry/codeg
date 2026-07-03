@@ -112,6 +112,7 @@ tempfile = "3"
 minisign-verify = "0.2"
 semver = "1"
 ngrok = "0.19.0"
+otools-host = { path = "../otools/host" }
 url = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "registry", "std"] }

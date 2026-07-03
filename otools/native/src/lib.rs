@@ -41,9 +41,12 @@ pub extern "C" fn otools_plugin_invoke(
         }
     };
 
-    let response = match handle_request(&request.method, request.payload) {
-        Ok(data) => json!({ "ok": true, "data": data }),
-        Err(error) => json!({ "ok": false, "error": error }),
+    let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        handle_request(&request.method, request.payload)
+    })) {
+        Ok(Ok(data)) => json!({ "ok": true, "data": data }),
+        Ok(Err(error)) => json!({ "ok": false, "error": error }),
+        Err(_) => json!({ "ok": false, "error": "OTools plugin runtime panicked" }),
     };
 
     write_response(response, output_len)

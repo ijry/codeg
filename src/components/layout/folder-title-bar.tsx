@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import {
+  Boxes,
   EllipsisVertical,
   Menu,
   PanelLeft,
@@ -11,7 +12,7 @@ import {
   SquareTerminal,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
-import { openSettingsWindow } from "@/lib/api"
+import { openOtoolsWindow, openSettingsWindow } from "@/lib/api"
 import { getPetSettings, openPetWindow } from "@/lib/pet/api"
 import { useAppWorkspace } from "@/contexts/app-workspace-context"
 import { useActiveFolder } from "@/contexts/active-folder-context"
@@ -113,6 +114,12 @@ export function FolderTitleBar() {
     })
   }, [])
 
+  const handleOpenOtools = useCallback(() => {
+    openOtoolsWindow("toolbar").catch((err) => {
+      console.error("[FolderTitleBar] failed to open OTools:", err)
+    })
+  }, [])
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (matchShortcutEvent(e, shortcuts.toggle_search)) {
@@ -162,6 +169,7 @@ export function FolderTitleBar() {
   }, [
     activeFolder,
     handleOpenFolder,
+    handleOpenOtools,
     handleOpenSettings,
     openConversations,
     openNewConversationTab,
@@ -188,6 +196,15 @@ export function FolderTitleBar() {
               >
                 <Menu className="h-4 w-4" />
               </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={handleOpenOtools}
+                title="OTools"
+              >
+                <Boxes className="h-4 w-4" />
+              </Button>
               <NewFolderDropdown />
               <RemoteWorkspaceDropdown />
               <BranchDropdown />
@@ -209,6 +226,15 @@ export function FolderTitleBar() {
                   })}
                 >
                   <PanelLeft className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 hover:text-foreground/80"
+                  onClick={handleOpenOtools}
+                  title="OTools"
+                >
+                  <Boxes className="h-3.5 w-3.5" />
                 </Button>
                 <NewFolderDropdown />
                 <RemoteWorkspaceDropdown />

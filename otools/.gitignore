@@ -1,3 +1,5 @@
 dist/
 lib/
 native/target/
+host/target/
+host/Cargo.lock

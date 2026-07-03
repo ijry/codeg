@@ -56,12 +56,20 @@ impl OtoolsPluginRuntime {
         let test_root = build_test_root_dir();
         std::fs::create_dir_all(&test_root).expect("create test root");
         std::fs::create_dir_all(test_root.join("static")).expect("create static dir");
-        std::fs::write(test_root.join("static").join("index.html"), "<!doctype html>")
-            .expect("write index.html");
+        std::fs::write(
+            test_root.join("static").join("index.html"),
+            "<!doctype html>",
+        )
+        .expect("write index.html");
 
-        Self::build(test_root.join("data"), test_root.join("static"), false, Some(test_root))
-            .await
-            .expect("create otools plugin runtime for tests")
+        Self::build(
+            test_root.join("data"),
+            test_root.join("static"),
+            false,
+            Some(test_root),
+        )
+        .await
+        .expect("create otools plugin runtime for tests")
     }
 
     #[cfg(test)]
@@ -87,16 +95,44 @@ impl OtoolsPluginRuntime {
             .map_err(|error| format!("failed to initialize database: {error}"))?;
 
         let broadcaster = Arc::new(WebEventBroadcaster::new());
-        let emitter = EventEmitter::WebOnly(broadcaster.clone());
+        let metrics = Arc::new(crate::acp::EventBusMetrics::default());
+        let acp_event_bus = Arc::new(crate::acp::InternalEventBus::new(metrics));
+        let emitter = EventEmitter::web_only(broadcaster.clone(), acp_event_bus.clone());
+        let connection_manager = crate::app_state::default_connection_manager();
+        let (
+            delegation_broker,
+            delegation_tokens,
+            delegation_socket_path,
+            feedback_config,
+            question_config,
+            session_info_config,
+        ) = crate::app_state::build_delegation_stack(
+            &connection_manager,
+            db.conn.clone(),
+            data_dir.clone(),
+        );
         let state = Arc::new(AppState {
             db,
-            connection_manager: crate::app_state::default_connection_manager(),
+            connection_manager,
             terminal_manager: crate::app_state::default_terminal_manager(),
             event_broadcaster: broadcaster,
+            acp_event_bus,
             emitter,
             data_dir,
             web_server_state: WebServerState::new(),
             chat_channel_manager: crate::app_state::default_chat_channel_manager(),
+            workspace_transfer: Arc::new(
+                crate::workspace_transfer::WorkspaceTransferManager::new_from_env(),
+            ),
+            pet_state: crate::pet_state_mapper::new_pet_state_handle(),
+            delegation_broker,
+            delegation_tokens,
+            delegation_socket_path,
+            feedback_config,
+            question_config,
+            session_info_config,
+            system_op_lock: crate::app_state::default_system_op_lock(),
+            update_state: crate::app_state::default_update_state(),
         });
         let token = generate_random_token();
         let shutdown_signal = state.web_server_state.shutdown_signal();
@@ -174,6 +210,7 @@ impl OtoolsPluginRuntime {
             .chat_channel_manager
             .start_background(
                 self.state.event_broadcaster.clone(),
+                self.state.acp_event_bus.clone(),
                 self.state.db.conn.clone(),
                 self.state.connection_manager.clone_ref(),
                 self.state.emitter.clone(),
@@ -183,7 +220,8 @@ impl OtoolsPluginRuntime {
         tokio::spawn(crate::lifecycle_subscriber_task(
             self.state.db.conn.clone(),
             self.state.connection_manager.clone_ref(),
-            self.state.event_broadcaster.clone(),
+            self.state.acp_event_bus.clone(),
+            Some(self.state.delegation_broker.clone()),
         ));
 
         if let Some(idle_timeout) = crate::idle_timeout_from_env() {
@@ -210,11 +248,10 @@ pub fn invoke_blocking(method: &str, payload: Value) -> Result<Value, String> {
         .lock()
         .map_err(|_| "otools runtime lock poisoned".to_string())?;
 
-    blocking_runtime()
-        .block_on(async {
-            let runtime = shared_runtime().await?;
-            runtime.invoke(method, payload).await
-        })
+    blocking_runtime().block_on(async {
+        let runtime = shared_runtime().await?;
+        runtime.invoke(method, payload).await
+    })
 }
 
 pub fn poll_events_blocking() -> Result<Vec<Value>, String> {
@@ -222,11 +259,10 @@ pub fn poll_events_blocking() -> Result<Vec<Value>, String> {
         .lock()
         .map_err(|_| "otools runtime lock poisoned".to_string())?;
 
-    blocking_runtime()
-        .block_on(async {
-            let runtime = shared_runtime().await?;
-            runtime.poll_events().await
-        })
+    blocking_runtime().block_on(async {
+        let runtime = shared_runtime().await?;
+        runtime.poll_events().await
+    })
 }
 
 fn blocking_runtime() -> &'static tokio::runtime::Runtime {
@@ -294,7 +330,10 @@ fn render_error_response(status: StatusCode, bytes: &[u8]) -> String {
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("request failed");
-            let detail = value.get("detail").and_then(Value::as_str).unwrap_or_default();
+            let detail = value
+                .get("detail")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if detail.is_empty() {
                 format!("{message} ({status})")
             } else {

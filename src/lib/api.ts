@@ -1746,6 +1746,21 @@ export async function openProjectBootWindow(source?: string): Promise<void> {
   }
 }
 
+export async function openOtoolsWindow(source?: string): Promise<void> {
+  if (isDesktop()) {
+    return getShellTransport().call("open_otools_window", {
+      source,
+      locale: getCurrentEffectiveAppLocale(),
+      remoteConnectionId: getActiveRemoteConnectionId(),
+    })
+  }
+  const result = await getTransport().call<{ path: string }>(
+    "open_otools_window",
+    { source }
+  )
+  window.open(result.path, "otools")
+}
+
 // Cross-window handoff for the project launcher, which lives in its own
 // window/tab and can't reach the workspace's React state directly. The
 // backend upserts the folder and emits `folder://open-in-workspace` carrying

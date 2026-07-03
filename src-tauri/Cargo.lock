@@ -1108,6 +1108,7 @@ dependencies = [
  "minisign-verify",
  "ngrok",
  "notify",
+ "otools-host",
  "portable-pty",
  "prost",
  "qrcode",
@@ -4383,6 +4384,25 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "otools-host"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "dirs",
+ "reqwest 0.12.28",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "url",
+ "uuid",
+ "walkdir",
+ "which 7.0.3",
+ "zip 2.4.2",
 ]
 
 [[package]]
