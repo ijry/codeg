@@ -1032,8 +1032,8 @@
     "loadFailed": "加载失败：{message}"
   },
   "LoginPage": {
-    "documentTitle": "登录 - codeg",
-    "brand": "Codeg",
+    "documentTitle": "登录 - codeg-plus",
+    "brand": "codeg-plus",
     "subtitle": "输入访问 Token 以连接到桌面端",
     "tokenPlaceholder": "Access Token",
     "connect": "连接",
@@ -2694,6 +2694,48 @@
       "permissionDenied": "权限不足，请使用 1024 以上的端口，或以更高权限运行",
       "addressUnavailable": "该地址在本机不可用",
       "bindFailed": "绑定地址失败"
+    },
+    "tunnel": {
+      "title": "Tunnel Service",
+      "description": "Expose the local Web service through a managed public tunnel.",
+      "provider": "Provider",
+      "providers": {
+        "none": "Disabled",
+        "ngrok": "ngrok"
+      },
+      "enabled": "Enabled",
+      "autoStart": "Auto-start",
+      "autoStartHint": "Start the tunnel when the Web service starts automatically",
+      "authToken": "ngrok Auth Token",
+      "authTokenPlaceholder": "Paste ngrok authtoken",
+      "authTokenSaved": "Auth token saved",
+      "authTokenMissing": "Auth token required before ngrok can start",
+      "clearAuthToken": "Clear token",
+      "publicUrl": "Public URL",
+      "states": {
+        "disabled": "Disabled",
+        "stopped": "Stopped",
+        "starting": "Starting",
+        "running": "Running",
+        "error": "Error"
+      },
+      "errors": {
+        "unsupportedProvider": "Tunnel provider is not supported",
+        "authTokenMissing": "ngrok auth token is missing",
+        "authFailed": "ngrok authentication failed",
+        "networkFailed": "ngrok network connection failed",
+        "startFailed": "Failed to start tunnel",
+        "stopFailed": "Failed to stop tunnel"
+      }
+    },
+    "mcodeConfigCode": {
+      "title": "添加到 MCode",
+      "description": "在 MCode 中扫描此配置码，即可添加当前 Web 服务连接。",
+      "showQr": "显示二维码",
+      "copyCode": "复制配置码",
+      "qrcodeTitle": "MCode 配置码",
+      "qrcodeHint": "打开 MCode，在连接导入页面扫描此二维码。",
+      "tokenWarning": "此配置码包含 Web 服务访问 Token，仅分享给可信设备。"
     }
   },
   "DirectoryBrowser": {

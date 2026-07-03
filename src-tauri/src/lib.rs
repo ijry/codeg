@@ -16,13 +16,13 @@ pub mod logging;
 pub mod models;
 mod network;
 pub mod office_watch;
+#[path = "../../otools/rust/otools_bridge.rs"]
+pub mod otools_bridge;
 pub mod parsers;
 pub mod paths;
 pub mod pet_sessions;
 pub mod pet_state_mapper;
 pub mod pets;
-#[path = "../../otools/rust/otools_bridge.rs"]
-pub mod otools_bridge;
 #[cfg(feature = "tauri-runtime")]
 pub mod preferences;
 pub mod process;
@@ -48,17 +48,16 @@ mod tauri_app {
     use crate::acp::manager::ConnectionManager;
     use crate::chat_channel::manager::ChatChannelManager;
     use crate::commands::{
-        acp as acp_commands, app_update as app_update_commands,
-        automation as automation_commands, backup,
-        chat_channel as chat_channel_commands, conversations, delegation as delegation_commands,
-        experts as experts_commands, feedback as feedback_commands, file_io, folder_commands,
-        office_tools as office_tools_commands,
-        folders, logging as logging_commands, mcp as mcp_commands,
-        model_provider as model_provider_commands, notification, pet as pet_commands, project_boot,
+        acp as acp_commands, app_update as app_update_commands, automation as automation_commands,
+        backup, chat_channel as chat_channel_commands, conversations,
+        delegation as delegation_commands, experts as experts_commands,
+        feedback as feedback_commands, file_io, folder_commands, folders,
+        logging as logging_commands, mcp as mcp_commands,
+        model_provider as model_provider_commands, notification,
+        office_tools as office_tools_commands, pet as pet_commands, project_boot,
         question as question_commands, quick_messages as quick_messages_commands,
-        remote_proxy as remote_proxy_commands,
-        remote_workspace as remote_workspace_commands, session_info as session_info_commands,
-        system_settings, terminal as terminal_commands,
+        remote_proxy as remote_proxy_commands, remote_workspace as remote_workspace_commands,
+        session_info as session_info_commands, system_settings, terminal as terminal_commands,
         version_control, windows, workspace_state as workspace_state_commands,
     };
     use crate::terminal::manager::TerminalManager;
@@ -159,9 +158,9 @@ mod tauri_app {
         // initialization. The callback runs in the *original* process.
         //
         // Skipped in debug builds so a locally-built `cargo run` instance
-        // can run alongside an installed release build of codeg during
+        // can run alongside an installed release build of codeg-plus during
         // development. Debug desktop builds use an isolated SQLite file, but
-        // they still share other `app.codeg` data-dir artifacts with release.
+        // they still share other `app.codeg-plus` data-dir artifacts with release.
         #[cfg(not(debug_assertions))]
         let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             windows::show_main_window(app);
@@ -595,6 +594,7 @@ mod tauri_app {
                                 config.port,
                                 None,
                                 config.token,
+                                web::TunnelSyncReason::ProcessStartup,
                             ))
                         {
                             tracing::error!("[WEB] auto-start failed: {err}");

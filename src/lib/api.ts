@@ -2860,10 +2860,35 @@ export async function terminalList(): Promise<TerminalInfo[]> {
 
 // ── Web Server Management ──
 
+export type WebTunnelProviderKind = "none" | "ngrok"
+
+export type WebTunnelStatusState =
+  | "disabled"
+  | "stopped"
+  | "starting"
+  | "running"
+  | "error"
+
+export interface WebTunnelConfig {
+  provider: WebTunnelProviderKind
+  enabled: boolean
+  autoStart: boolean
+  authTokenPresent: boolean
+  authToken?: string | null
+}
+
+export interface WebTunnelStatusInfo {
+  provider: WebTunnelProviderKind
+  state: WebTunnelStatusState
+  publicUrl: string | null
+  lastError: string | null
+}
+
 export interface WebServerInfo {
   port: number
   token: string
   addresses: string[]
+  tunnel: WebTunnelStatusInfo
 }
 
 export async function startWebServer(params?: {
@@ -2890,6 +2915,7 @@ export interface WebServiceConfig {
   token: string | null
   port: number | null
   autoStart: boolean
+  tunnel: WebTunnelConfig
 }
 
 export async function getWebServiceConfig(): Promise<WebServiceConfig> {

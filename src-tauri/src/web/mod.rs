@@ -5,10 +5,15 @@ pub mod port_probe;
 pub mod router;
 pub mod shutdown;
 pub mod socket_inherit;
+pub mod tunnel;
+pub mod tunnel_ngrok;
 pub mod ws;
 pub mod ws_attach;
 
 pub use port_probe::{PortState, WebServicePortProbe};
+pub use tunnel::{
+    stop_web_tunnel, sync_web_tunnel_runtime, TunnelStatusInfo, TunnelStatusState, TunnelSyncReason,
+};
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -27,6 +32,9 @@ use crate::db::service::app_metadata_service;
 const WEB_SERVICE_TOKEN_KEY: &str = "web_service_token";
 const WEB_SERVICE_PORT_KEY: &str = "web_service_port";
 const WEB_SERVICE_AUTO_START_KEY: &str = "web_service_auto_start";
+const WEB_TUNNEL_PROVIDER_KEY: &str = "web_tunnel_provider";
+const WEB_TUNNEL_ENABLED_KEY: &str = "web_tunnel_enabled";
+const WEB_TUNNEL_AUTO_START_KEY: &str = "web_tunnel_auto_start";
 pub const DEFAULT_WEB_SERVICE_PORT: u16 = 3080;
 
 pub struct WebServerState {
@@ -45,6 +53,7 @@ pub struct WebServerState {
     /// specific bind makes the other interfaces' IPs unreachable.
     host: Mutex<String>,
     running: std::sync::atomic::AtomicBool,
+    tunnel_runtime: Arc<tunnel::TunnelRuntimeState>,
 }
 
 impl Default for WebServerState {
@@ -55,6 +64,10 @@ impl Default for WebServerState {
 
 impl WebServerState {
     pub fn new() -> Self {
+        Self::new_with_tunnel_runtime(Arc::new(tunnel::TunnelRuntimeState::new()))
+    }
+
+    fn new_with_tunnel_runtime(tunnel_runtime: Arc<tunnel::TunnelRuntimeState>) -> Self {
         Self {
             handle: Mutex::new(None),
             shutdown_tx: Mutex::new(None),
@@ -63,6 +76,7 @@ impl WebServerState {
             token: Mutex::new(String::new()),
             host: Mutex::new("0.0.0.0".to_string()),
             running: std::sync::atomic::AtomicBool::new(false),
+            tunnel_runtime,
         }
     }
 
@@ -70,6 +84,10 @@ impl WebServerState {
     /// callers (e.g. `codeg-server`) can pass it to `build_router`.
     pub fn shutdown_signal(&self) -> Arc<ShutdownSignal> {
         self.shutdown_signal.clone()
+    }
+
+    pub fn tunnel_runtime(&self) -> Arc<tunnel::TunnelRuntimeState> {
+        self.tunnel_runtime.clone()
     }
 
     /// Mark the server as running from outside the Tauri command path.
@@ -100,6 +118,7 @@ pub struct WebServerInfo {
     pub port: u16,
     pub token: String,
     pub addresses: Vec<String>,
+    pub tunnel: TunnelStatusInfo,
 }
 
 pub fn generate_random_token() -> String {
@@ -227,12 +246,70 @@ fn parse_bool_metadata(value: Option<String>) -> bool {
     )
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelProviderKind {
+    None,
+    Ngrok,
+}
+
+impl Default for TunnelProviderKind {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl TunnelProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Ngrok => "ngrok",
+        }
+    }
+}
+
+fn parse_tunnel_provider(value: Option<String>) -> TunnelProviderKind {
+    match value.as_deref().map(str::trim) {
+        Some("ngrok") => TunnelProviderKind::Ngrok,
+        _ => TunnelProviderKind::None,
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelServiceConfig {
+    #[serde(default)]
+    pub provider: TunnelProviderKind,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_start: bool,
+    #[serde(default)]
+    pub auth_token_present: bool,
+    #[serde(default, skip_serializing)]
+    pub auth_token: Option<String>,
+}
+
+impl Default for TunnelServiceConfig {
+    fn default() -> Self {
+        Self {
+            provider: TunnelProviderKind::None,
+            enabled: false,
+            auto_start: false,
+            auth_token_present: false,
+            auth_token: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebServiceConfig {
     pub token: Option<String>,
     pub port: Option<u16>,
     pub auto_start: bool,
+    #[serde(default)]
+    pub tunnel: TunnelServiceConfig,
 }
 
 pub async fn load_web_service_config(
@@ -251,10 +328,34 @@ pub async fn load_web_service_config(
             .await
             .map_err(AppCommandError::from)?,
     );
+    let tunnel_provider = parse_tunnel_provider(
+        app_metadata_service::get_value(conn, WEB_TUNNEL_PROVIDER_KEY)
+            .await
+            .map_err(AppCommandError::from)?,
+    );
+    let tunnel_enabled = parse_bool_metadata(
+        app_metadata_service::get_value(conn, WEB_TUNNEL_ENABLED_KEY)
+            .await
+            .map_err(AppCommandError::from)?,
+    );
+    let tunnel_auto_start = parse_bool_metadata(
+        app_metadata_service::get_value(conn, WEB_TUNNEL_AUTO_START_KEY)
+            .await
+            .map_err(AppCommandError::from)?,
+    );
+    let auth_token_present = tunnel_provider != TunnelProviderKind::None
+        && crate::keyring_store::get_tunnel_token(tunnel_provider.as_str()).is_some();
     Ok(WebServiceConfig {
         token: token.filter(|value| !value.trim().is_empty()),
         port,
         auto_start,
+        tunnel: TunnelServiceConfig {
+            provider: tunnel_provider,
+            enabled: tunnel_enabled,
+            auto_start: tunnel_auto_start,
+            auth_token_present,
+            auth_token: None,
+        },
     })
 }
 
@@ -266,6 +367,21 @@ pub async fn update_web_service_config_core(
     let port = config.port.unwrap_or(DEFAULT_WEB_SERVICE_PORT);
     let auto_start = if config.auto_start { "true" } else { "false" }.to_string();
     let port_str = port.to_string();
+    let tunnel_provider_kind = config.tunnel.provider;
+    let tunnel_provider = tunnel_provider_kind.as_str().to_string();
+    let tunnel_enabled = if config.tunnel.enabled {
+        "true"
+    } else {
+        "false"
+    }
+    .to_string();
+    let tunnel_auto_start = if config.tunnel.auto_start {
+        "true"
+    } else {
+        "false"
+    }
+    .to_string();
+    let tunnel_auth_token = config.tunnel.auth_token.clone();
 
     conn.transaction::<_, (), AppCommandError>(move |txn| {
         Box::pin(async move {
@@ -276,6 +392,15 @@ pub async fn update_web_service_config_core(
                 .await
                 .map_err(AppCommandError::from)?;
             app_metadata_service::upsert_value(txn, WEB_SERVICE_AUTO_START_KEY, &auto_start)
+                .await
+                .map_err(AppCommandError::from)?;
+            app_metadata_service::upsert_value(txn, WEB_TUNNEL_PROVIDER_KEY, &tunnel_provider)
+                .await
+                .map_err(AppCommandError::from)?;
+            app_metadata_service::upsert_value(txn, WEB_TUNNEL_ENABLED_KEY, &tunnel_enabled)
+                .await
+                .map_err(AppCommandError::from)?;
+            app_metadata_service::upsert_value(txn, WEB_TUNNEL_AUTO_START_KEY, &tunnel_auto_start)
                 .await
                 .map_err(AppCommandError::from)?;
             Ok(())
@@ -289,6 +414,24 @@ pub async fn update_web_service_config_core(
         }
         TransactionError::Transaction(inner) => inner,
     })?;
+
+    if let Some(auth_token) = tunnel_auth_token.as_deref() {
+        let trimmed = auth_token.trim();
+        if trimmed.is_empty() {
+            crate::keyring_store::delete_tunnel_token(tunnel_provider_kind.as_str()).map_err(
+                |err| {
+                    AppCommandError::new(AppErrorCode::IoError, "Failed to delete tunnel token")
+                        .with_detail(err)
+                },
+            )?;
+        } else {
+            crate::keyring_store::set_tunnel_token(tunnel_provider_kind.as_str(), trimmed)
+                .map_err(|err| {
+                    AppCommandError::new(AppErrorCode::IoError, "Failed to store tunnel token")
+                        .with_detail(err)
+                })?;
+        }
+    }
 
     load_web_service_config(conn).await
 }
@@ -619,15 +762,27 @@ pub(crate) async fn do_start_web_server_with_state(
     // running already true from compare_exchange; disarm guard so it doesn't flip back.
     guard.disarm();
 
+    // Sync tunnel after local Web Service bind succeeds.
+    let tunnel_config = load_web_service_config(&app_state.db.conn).await?.tunnel;
+    sync_web_tunnel_runtime(
+        &app_state.web_server_state.tunnel_runtime,
+        &tunnel_config,
+        TunnelSyncReason::ManualStart,
+    )
+    .await;
     let addresses = addresses_for_bind(&advertised_host, actual_port);
     Ok(WebServerInfo {
         port: actual_port,
         token,
         addresses,
+        tunnel: app_state.web_server_state.tunnel_runtime.status(),
     })
 }
-
 pub(crate) async fn do_stop_web_server(state: &WebServerState) {
+    // Tear down tunnel before stopping local server.
+    stop_web_tunnel(&state.tunnel_runtime).await;
+    state.tunnel_runtime.set_status(TunnelStatusInfo::default());
+
     let handle_opt = state.handle.lock().unwrap().take();
     let shutdown_tx = state.shutdown_tx.lock().unwrap().take();
 
@@ -677,6 +832,7 @@ pub(crate) fn do_get_web_server_status(state: &WebServerState) -> Option<WebServ
         port,
         token,
         addresses,
+        tunnel: state.tunnel_runtime.status(),
     })
 }
 
@@ -702,6 +858,7 @@ pub(crate) async fn do_start_web_server_tauri(
     port: Option<u16>,
     host: Option<String>,
     token: Option<String>,
+    tunnel_sync_reason: TunnelSyncReason,
 ) -> Result<WebServerInfo, AppCommandError> {
     // In Tauri mode, we still need to start via the legacy path because
     // the full AppState isn't easily available from tauri::State here.
@@ -783,7 +940,7 @@ pub(crate) async fn do_start_web_server_tauri(
         data_dir: crate::paths::resolve_effective_data_dir(
             &app.path().app_data_dir().unwrap_or_default(),
         ),
-        web_server_state: WebServerState::new(), // placeholder; not used by handlers
+        web_server_state: WebServerState::new_with_tunnel_runtime(ws.tunnel_runtime()),
         chat_channel_manager: crate::app_state::default_chat_channel_manager(),
         workspace_transfer: app
             .try_state::<Arc<crate::workspace_transfer::WorkspaceTransferManager>>()
@@ -878,12 +1035,16 @@ pub(crate) async fn do_start_web_server_tauri(
     *ws.host.lock().unwrap() = advertised_host.clone();
     // running already true from compare_exchange; disarm guard so it doesn't flip back.
     guard.disarm();
+    // Sync tunnel after local Web Service bind succeeds.
+    let tunnel_config = load_web_service_config(&db.conn).await?.tunnel;
+    sync_web_tunnel_runtime(&ws.tunnel_runtime, &tunnel_config, tunnel_sync_reason).await;
 
     let addresses = addresses_for_bind(&advertised_host, actual_port);
     Ok(WebServerInfo {
         port: actual_port,
         token,
         addresses,
+        tunnel: ws.tunnel_runtime.status(),
     })
 }
 
@@ -896,7 +1057,15 @@ pub async fn start_web_server(
     host: Option<String>,
     token: Option<String>,
 ) -> Result<WebServerInfo, AppCommandError> {
-    do_start_web_server_tauri(app, &state, port, host, token).await
+    do_start_web_server_tauri(
+        app,
+        &state,
+        port,
+        host,
+        token,
+        TunnelSyncReason::ManualStart,
+    )
+    .await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -928,9 +1097,19 @@ pub async fn get_web_service_config(
 #[tauri::command]
 pub async fn update_web_service_config(
     db: tauri::State<'_, crate::db::AppDatabase>,
+    state: tauri::State<'_, WebServerState>,
     config: WebServiceConfig,
 ) -> Result<WebServiceConfig, AppCommandError> {
-    update_web_service_config_core(&db.conn, config).await
+    let saved = update_web_service_config_core(&db.conn, config).await?;
+    if state.running.load(Ordering::Acquire) {
+        sync_web_tunnel_runtime(
+            &state.tunnel_runtime,
+            &saved.tunnel,
+            TunnelSyncReason::ConfigChanged,
+        )
+        .await;
+    }
+    Ok(saved)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -944,9 +1123,7 @@ pub async fn probe_web_service_port(
 
 #[cfg(test)]
 mod local_address_tests {
-    use super::{
-        addresses_for_bind, advertise_host, get_local_addresses, is_advertisable_ipv4,
-    };
+    use super::{addresses_for_bind, advertise_host, get_local_addresses, is_advertisable_ipv4};
     use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
@@ -956,7 +1133,7 @@ mod local_address_tests {
         assert!(!is_advertisable_ipv4(Ipv4Addr::LOCALHOST)); // 127.0.0.1
         assert!(!is_advertisable_ipv4(Ipv4Addr::new(169, 254, 3, 4))); // link-local
         assert!(!is_advertisable_ipv4(Ipv4Addr::UNSPECIFIED)); // 0.0.0.0
-        // Accepted: ordinary private/LAN addresses the user may want to share.
+                                                               // Accepted: ordinary private/LAN addresses the user may want to share.
         assert!(is_advertisable_ipv4(Ipv4Addr::new(192, 168, 1, 5)));
         assert!(is_advertisable_ipv4(Ipv4Addr::new(10, 0, 0, 4)));
         assert!(is_advertisable_ipv4(Ipv4Addr::new(172, 16, 0, 9)));
@@ -1016,7 +1193,10 @@ mod local_address_tests {
         );
         // A wildcard bind stays wildcard, so addresses_for_bind still enumerates.
         assert_eq!(
-            advertise_host(Some("0.0.0.0:3080".parse::<SocketAddr>().unwrap()), "0.0.0.0"),
+            advertise_host(
+                Some("0.0.0.0:3080".parse::<SocketAddr>().unwrap()),
+                "0.0.0.0"
+            ),
             "0.0.0.0"
         );
         // End to end: a `localhost` config advertises only loopback, never LAN.

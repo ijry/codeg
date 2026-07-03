@@ -1032,8 +1032,8 @@
     "loadFailed": "Laden fehlgeschlagen: {message}"
   },
   "LoginPage": {
-    "documentTitle": "Anmelden - codeg",
-    "brand": "Codeg",
+    "documentTitle": "Anmelden - codeg-plus",
+    "brand": "codeg-plus",
     "subtitle": "Gib dein Zugriffstoken ein, um dich mit der Desktop-App zu verbinden",
     "tokenPlaceholder": "Zugriffstoken",
     "connect": "Verbinden",
@@ -2694,6 +2694,48 @@
       "permissionDenied": "Zugriff verweigert. Verwenden Sie einen Port über 1024 oder starten Sie mit höheren Rechten.",
       "addressUnavailable": "Die Adresse ist auf diesem Computer nicht verfügbar",
       "bindFailed": "Adresse konnte nicht gebunden werden"
+    },
+    "tunnel": {
+      "title": "Tunnel Service",
+      "description": "Expose the local Web service through a managed public tunnel.",
+      "provider": "Provider",
+      "providers": {
+        "none": "Disabled",
+        "ngrok": "ngrok"
+      },
+      "enabled": "Enabled",
+      "autoStart": "Auto-start",
+      "autoStartHint": "Start the tunnel when the Web service starts automatically",
+      "authToken": "ngrok Auth Token",
+      "authTokenPlaceholder": "Paste ngrok authtoken",
+      "authTokenSaved": "Auth token saved",
+      "authTokenMissing": "Auth token required before ngrok can start",
+      "clearAuthToken": "Clear token",
+      "publicUrl": "Public URL",
+      "states": {
+        "disabled": "Disabled",
+        "stopped": "Stopped",
+        "starting": "Starting",
+        "running": "Running",
+        "error": "Error"
+      },
+      "errors": {
+        "unsupportedProvider": "Tunnel provider is not supported",
+        "authTokenMissing": "ngrok auth token is missing",
+        "authFailed": "ngrok authentication failed",
+        "networkFailed": "ngrok network connection failed",
+        "startFailed": "Failed to start tunnel",
+        "stopFailed": "Failed to stop tunnel"
+      }
+    },
+    "mcodeConfigCode": {
+      "title": "Add to MCode",
+      "description": "Scan this config code in MCode to add this Web service connection.",
+      "showQr": "Show QR code",
+      "copyCode": "Copy config code",
+      "qrcodeTitle": "MCode config code",
+      "qrcodeHint": "Open MCode and scan this code from the connection import screen.",
+      "tokenWarning": "This code contains the Web service access token. Only share it with trusted devices."
     }
   },
   "DirectoryBrowser": {

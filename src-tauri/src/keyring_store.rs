@@ -9,6 +9,10 @@ fn channel_token_key(channel_id: i32) -> String {
     format!("chat-channel:{}", channel_id)
 }
 
+fn tunnel_token_key(provider: &str) -> String {
+    format!("tunnel-token:{}", provider)
+}
+
 // ── Tauri mode: OS keyring ──
 
 #[cfg(feature = "tauri-runtime")]
@@ -29,6 +33,32 @@ pub fn get_token(account_id: &str) -> Option<String> {
 #[cfg(feature = "tauri-runtime")]
 pub fn delete_token(account_id: &str) -> Result<(), String> {
     let entry = keyring::Entry::new(SERVICE_NAME, &token_key(account_id))
+        .map_err(|e| format!("keyring init error: {e}"))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("keyring delete error: {e}")),
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+pub fn set_tunnel_token(provider: &str, token: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(SERVICE_NAME, &tunnel_token_key(provider))
+        .map_err(|e| format!("keyring init error: {e}"))?;
+    entry
+        .set_password(token)
+        .map_err(|e| format!("keyring set error: {e}"))
+}
+
+#[cfg(feature = "tauri-runtime")]
+pub fn get_tunnel_token(provider: &str) -> Option<String> {
+    let entry = keyring::Entry::new(SERVICE_NAME, &tunnel_token_key(provider)).ok()?;
+    entry.get_password().ok()
+}
+
+#[cfg(feature = "tauri-runtime")]
+pub fn delete_tunnel_token(provider: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(SERVICE_NAME, &tunnel_token_key(provider))
         .map_err(|e| format!("keyring init error: {e}"))?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
@@ -98,6 +128,25 @@ pub fn get_token(account_id: &str) -> Option<String> {
 pub fn delete_token(account_id: &str) -> Result<(), String> {
     let mut tokens = read_tokens();
     tokens.remove(&token_key(account_id));
+    write_tokens(&tokens)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub fn set_tunnel_token(provider: &str, token: &str) -> Result<(), String> {
+    let mut tokens = read_tokens();
+    tokens.insert(tunnel_token_key(provider), token.to_string());
+    write_tokens(&tokens)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub fn get_tunnel_token(provider: &str) -> Option<String> {
+    read_tokens().get(&tunnel_token_key(provider)).cloned()
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub fn delete_tunnel_token(provider: &str) -> Result<(), String> {
+    let mut tokens = read_tokens();
+    tokens.remove(&tunnel_token_key(provider));
     write_tokens(&tokens)
 }
 
@@ -186,5 +235,10 @@ mod tests {
         let resolved = tokens_file_path_for(None);
         assert!(resolved.is_absolute());
         assert!(resolved.ends_with("tokens.json"));
+    }
+
+    #[test]
+    fn test_tunnel_token_key_uses_provider_namespace() {
+        assert_eq!(tunnel_token_key("ngrok"), "tunnel-token:ngrok");
     }
 }

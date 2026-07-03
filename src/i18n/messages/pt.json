@@ -1032,8 +1032,8 @@
     "loadFailed": "Falha ao carregar: {message}"
   },
   "LoginPage": {
-    "documentTitle": "Entrar - codeg",
-    "brand": "Codeg",
+    "documentTitle": "Entrar - codeg-plus",
+    "brand": "codeg-plus",
     "subtitle": "Digite seu token de acesso para conectar ao aplicativo de desktop",
     "tokenPlaceholder": "Token de acesso",
     "connect": "Conectar",
@@ -2694,6 +2694,48 @@
       "permissionDenied": "Permissão negada. Use uma porta acima de 1024 ou execute com privilégios mais altos.",
       "addressUnavailable": "O endereço não está disponível nesta máquina",
       "bindFailed": "Falha ao vincular o endereço"
+    },
+    "tunnel": {
+      "title": "Tunnel Service",
+      "description": "Expose the local Web service through a managed public tunnel.",
+      "provider": "Provider",
+      "providers": {
+        "none": "Disabled",
+        "ngrok": "ngrok"
+      },
+      "enabled": "Enabled",
+      "autoStart": "Auto-start",
+      "autoStartHint": "Start the tunnel when the Web service starts automatically",
+      "authToken": "ngrok Auth Token",
+      "authTokenPlaceholder": "Paste ngrok authtoken",
+      "authTokenSaved": "Auth token saved",
+      "authTokenMissing": "Auth token required before ngrok can start",
+      "clearAuthToken": "Clear token",
+      "publicUrl": "Public URL",
+      "states": {
+        "disabled": "Disabled",
+        "stopped": "Stopped",
+        "starting": "Starting",
+        "running": "Running",
+        "error": "Error"
+      },
+      "errors": {
+        "unsupportedProvider": "Tunnel provider is not supported",
+        "authTokenMissing": "ngrok auth token is missing",
+        "authFailed": "ngrok authentication failed",
+        "networkFailed": "ngrok network connection failed",
+        "startFailed": "Failed to start tunnel",
+        "stopFailed": "Failed to stop tunnel"
+      }
+    },
+    "mcodeConfigCode": {
+      "title": "Add to MCode",
+      "description": "Scan this config code in MCode to add this Web service connection.",
+      "showQr": "Show QR code",
+      "copyCode": "Copy config code",
+      "qrcodeTitle": "MCode config code",
+      "qrcodeHint": "Open MCode and scan this code from the connection import screen.",
+      "tokenWarning": "This code contains the Web service access token. Only share it with trusted devices."
     }
   },
   "DirectoryBrowser": {

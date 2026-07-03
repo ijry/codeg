@@ -37,12 +37,28 @@ import {
   probeWebServicePort,
   type WebServerInfo,
   type WebServicePortProbe,
+  type WebTunnelConfig,
+  type WebTunnelStatusInfo,
 } from "@/lib/api"
-
-const DEFAULT_PORT = 3080
 import { openUrl } from "@/lib/platform"
 import { copyTextToClipboard } from "@/lib/utils"
 import { useCopiedFlag } from "@/hooks/use-copied-flag"
+
+const DEFAULT_PORT = 3080
+const DEFAULT_TUNNEL_CONFIG: WebTunnelConfig = {
+  provider: "none",
+  enabled: false,
+  autoStart: false,
+  authTokenPresent: false,
+  authToken: null,
+}
+
+const DEFAULT_TUNNEL_STATUS: WebTunnelStatusInfo = {
+  provider: "none",
+  state: "disabled",
+  publicUrl: null,
+  lastError: null,
+}
 
 // Remembers which reachable address the user last chose to display/open.
 // Keyed by host (IP) only, so the choice survives a port change.
@@ -66,6 +82,34 @@ function readSavedDisplayHost(): string | null {
   } catch {
     return null
   }
+}
+
+function encodeBase64UrlText(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ""
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "")
+}
+
+function buildMcodeConnectionConfigCode(
+  baseUrl: string,
+  accessToken: string
+): string {
+  return encodeBase64UrlText(
+    JSON.stringify({
+      version: 2,
+      name: "codeg-plus",
+      targetAgent: "codeg",
+      routeMode: "direct",
+      directBaseUrl: baseUrl.replace(/\/+$/g, ""),
+      directToken: accessToken,
+    })
+  )
 }
 
 const ADDRESS_ICON_BUTTON_CLASS =
@@ -188,6 +232,38 @@ function AddressQrcodeDialog({
   )
 }
 
+function McodeConfigCodeDialog({
+  open,
+  configCode,
+  onOpenChange,
+}: {
+  open: boolean
+  configCode: string
+  onOpenChange: (open: boolean) => void
+}) {
+  const t = useTranslations("WebServiceSettings")
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-xs">
+        <DialogHeader>
+          <DialogTitle>{t("mcodeConfigCode.qrcodeTitle")}</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col items-center gap-4 py-2">
+          <div className="rounded-lg bg-white p-3">
+            <QRCodeSVG value={configCode} size={208} marginSize={0} />
+          </div>
+          <code className="max-h-20 overflow-auto text-center text-xs break-all text-muted-foreground select-all">
+            {configCode}
+          </code>
+          <p className="text-center text-xs text-muted-foreground">
+            {t("mcodeConfigCode.qrcodeHint")}
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function generateRandomToken() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID().replace(/-/g, "")
@@ -201,12 +277,14 @@ function TokenEditor({
   label,
   value,
   onChange,
+  onBlur,
   disabled,
   placeholder,
 }: {
   label: string
   value: string
   onChange: (next: string) => void
+  onBlur?: () => void
   disabled: boolean
   placeholder: string
 }) {
@@ -229,6 +307,7 @@ function TokenEditor({
           type={revealed ? "text" : "password"}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
           disabled={disabled}
           placeholder={placeholder}
           spellCheck={false}
@@ -288,6 +367,10 @@ export function WebServiceSettings() {
   const [autoStart, setAutoStart] = useState(false)
   const [configLoaded, setConfigLoaded] = useState(false)
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null)
+  const [tunnel, setTunnel] = useState<WebTunnelConfig>(DEFAULT_TUNNEL_CONFIG)
+  const [tunnelAuthToken, setTunnelAuthToken] = useState("")
+  const [mcodeQrOpen, setMcodeQrOpen] = useState(false)
+  const [configCodeCopied, markConfigCodeCopied] = useCopiedFlag()
 
   const probePort = useCallback(async (portNum: number) => {
     try {
@@ -304,6 +387,7 @@ export function WebServiceSettings() {
         token: null,
         port: null,
         autoStart: false,
+        tunnel: DEFAULT_TUNNEL_CONFIG,
       }
       const [info, configResult] = await Promise.all([
         getWebServerStatus(),
@@ -314,6 +398,8 @@ export function WebServiceSettings() {
       const savedConfig = configResult.config
       setStatus(info)
       setAutoStart(savedConfig.autoStart ?? false)
+      setTunnel(savedConfig.tunnel ?? DEFAULT_TUNNEL_CONFIG)
+      setTunnelAuthToken("")
       if (info) {
         setPort(String(info.port))
         setToken(info.token)
@@ -372,23 +458,25 @@ export function WebServiceSettings() {
   }
 
   const persistWebServiceConfig = useCallback(
-    async (nextAutoStart = autoStart) => {
+    async (nextAutoStart = autoStart, nextTunnel = tunnel) => {
       const portNum = parseInt(port, 10)
       if (!Number.isFinite(portNum) || portNum < 1 || portNum > 65535) {
         return
       }
 
       try {
-        await updateWebServiceConfig({
+        const saved = await updateWebServiceConfig({
           port: portNum,
           token: token.trim() || null,
           autoStart: nextAutoStart,
+          tunnel: nextTunnel,
         })
+        setTunnel(saved.tunnel)
       } catch {
         setError(t("saveConfigFailed"))
       }
     },
-    [autoStart, port, t, token]
+    [autoStart, port, t, token, tunnel]
   )
 
   useEffect(() => {
@@ -404,6 +492,39 @@ export function WebServiceSettings() {
 
     return () => window.clearTimeout(timeout)
   }, [configLoaded, persistWebServiceConfig, port])
+
+  const tunnelStatus = status?.tunnel ?? DEFAULT_TUNNEL_STATUS
+
+  function updateTunnel(next: Partial<WebTunnelConfig>) {
+    const merged = { ...tunnel, ...next }
+    setTunnel(merged)
+    void persistWebServiceConfig(autoStart, merged)
+  }
+
+  function updateTunnelAuthToken(nextToken: string) {
+    setTunnelAuthToken(nextToken)
+  }
+
+  function saveTunnelAuthToken() {
+    if (!tunnelAuthToken.trim()) return
+    const merged: WebTunnelConfig = { ...tunnel, authToken: tunnelAuthToken }
+    void persistWebServiceConfig(autoStart, merged)
+  }
+
+  function clearTunnelAuthToken() {
+    setTunnelAuthToken("")
+    const merged: WebTunnelConfig = { ...tunnel, authToken: "" }
+    void persistWebServiceConfig(autoStart, merged)
+  }
+
+  const tunnelErrorKeys: Record<string, string> = {
+    "web_tunnel.unsupported_provider": "tunnel.errors.unsupportedProvider",
+    "web_tunnel.auth_token_missing": "tunnel.errors.authTokenMissing",
+    "web_tunnel.auth_failed": "tunnel.errors.authFailed",
+    "web_tunnel.network_failed": "tunnel.errors.networkFailed",
+    "web_tunnel.start_failed": "tunnel.errors.startFailed",
+    "web_tunnel.stop_failed": "tunnel.errors.stopFailed",
+  }
 
   const startErrorKeys: Record<string, string> = {
     "web_server.already_running": "errors.alreadyRunning",
@@ -470,6 +591,11 @@ export function WebServiceSettings() {
 
   const isRunning = status !== null
   const currentAddress = selectedAddress ?? status?.addresses[0] ?? null
+  const mcodeConnectionBaseUrl = tunnelStatus.publicUrl ?? currentAddress
+  const mcodeConfigCode =
+    isRunning && mcodeConnectionBaseUrl && token
+      ? buildMcodeConnectionConfigCode(mcodeConnectionBaseUrl, token)
+      : null
   const hasMultipleAddresses = (status?.addresses.length ?? 0) > 1
   const showStaleBanner =
     !isRunning &&
@@ -548,6 +674,188 @@ export function WebServiceSettings() {
               </span>
             </div>
           </div>
+
+          {/* Tunnel Service */}
+          <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+            <div>
+              <div className="text-sm font-medium">{t("tunnel.title")}</div>
+              <p className="text-xs text-muted-foreground">
+                {t("tunnel.description")}
+              </p>
+            </div>
+            <div className="flex items-center gap-4">
+              <label className="w-20 text-sm font-medium">
+                {t("tunnel.provider")}
+              </label>
+              <Select
+                value={tunnel.provider}
+                onValueChange={(provider) =>
+                  updateTunnel({
+                    provider: provider as WebTunnelConfig["provider"],
+                    enabled: provider === "none" ? false : tunnel.enabled,
+                    authToken: null,
+                  })
+                }
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">
+                    {t("tunnel.providers.none")}
+                  </SelectItem>
+                  <SelectItem value="ngrok">
+                    {t("tunnel.providers.ngrok")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {tunnel.provider !== "none" && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-4">
+                  <label className="w-20 text-sm font-medium">
+                    {t("tunnel.enabled")}
+                  </label>
+                  <Switch
+                    checked={tunnel.enabled}
+                    onCheckedChange={(enabled) =>
+                      updateTunnel({ enabled, authToken: null })
+                    }
+                  />
+                </div>
+                <div className="flex items-center gap-4">
+                  <label className="w-20 text-sm font-medium">
+                    {t("tunnel.autoStart")}
+                  </label>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Switch
+                      checked={tunnel.autoStart}
+                      onCheckedChange={(autoStart) =>
+                        updateTunnel({ autoStart, authToken: null })
+                      }
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      {t("tunnel.autoStartHint")}
+                    </span>
+                  </div>
+                </div>
+                {tunnel.provider === "ngrok" && (
+                  <div className="space-y-2">
+                    <TokenEditor
+                      label={t("tunnel.authToken")}
+                      value={tunnelAuthToken}
+                      onChange={updateTunnelAuthToken}
+                      onBlur={saveTunnelAuthToken}
+                      disabled={false}
+                      placeholder={t("tunnel.authTokenPlaceholder")}
+                    />
+                    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                      <span>
+                        {tunnel.authTokenPresent
+                          ? t("tunnel.authTokenSaved")
+                          : t("tunnel.authTokenMissing")}
+                      </span>
+                      {tunnel.authTokenPresent && (
+                        <button
+                          type="button"
+                          className="text-destructive hover:underline"
+                          onClick={clearTunnelAuthToken}
+                        >
+                          {t("tunnel.clearAuthToken")}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <span
+                className={`inline-block h-2 w-2 rounded-full ${
+                  tunnelStatus.state === "running"
+                    ? "bg-green-500"
+                    : tunnelStatus.state === "error"
+                      ? "bg-destructive"
+                      : "bg-muted-foreground/30"
+                }`}
+              />
+              <span className="text-sm">
+                {t(
+                  `tunnel.states.${tunnelStatus.state}` as Parameters<
+                    typeof t
+                  >[0]
+                )}
+              </span>
+            </div>
+            {tunnelStatus.publicUrl && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {t("tunnel.publicUrl")}
+                </div>
+                <AddressBar
+                  address={tunnelStatus.publicUrl}
+                  addresses={[tunnelStatus.publicUrl]}
+                  hasMultiple={false}
+                  onSelect={() => {}}
+                />
+              </div>
+            )}
+            {tunnelStatus.lastError && (
+              <p className="text-xs text-destructive">
+                {t(
+                  (tunnelErrorKeys[tunnelStatus.lastError] ??
+                    "tunnel.errors.startFailed") as Parameters<typeof t>[0]
+                )}
+              </p>
+            )}
+          </div>
+
+          {isRunning && mcodeConfigCode && (
+            <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+              <div>
+                <div className="text-sm font-medium">
+                  {t("mcodeConfigCode.title")}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t("mcodeConfigCode.description")}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMcodeQrOpen(true)}
+                  className="inline-flex h-8 items-center gap-2 rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                >
+                  <QrCode className="h-3.5 w-3.5" />
+                  {t("mcodeConfigCode.showQr")}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (await copyTextToClipboard(mcodeConfigCode)) {
+                      markConfigCodeCopied()
+                    }
+                  }}
+                  className="inline-flex h-8 items-center gap-2 rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                >
+                  {configCodeCopied ? (
+                    <Check className="h-3.5 w-3.5 text-green-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                  {t("mcodeConfigCode.copyCode")}
+                </button>
+              </div>
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                {t("mcodeConfigCode.tokenWarning")}
+              </p>
+              <McodeConfigCodeDialog
+                open={mcodeQrOpen}
+                configCode={mcodeConfigCode}
+                onOpenChange={setMcodeQrOpen}
+              />
+            </div>
+          )}
 
           {/* Start/Stop button */}
           <div className="flex items-center gap-4">

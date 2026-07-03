@@ -7,10 +7,9 @@ use crate::app_error::AppCommandError;
 use crate::app_state::AppState;
 use crate::web::{
     do_get_web_server_status, do_probe_web_service_port, do_stop_web_server,
-    load_web_service_config, update_web_service_config_core, WebServerInfo, WebServiceConfig,
-    WebServicePortProbe,
+    load_web_service_config, sync_web_tunnel_runtime, update_web_service_config_core,
+    TunnelSyncReason, WebServerInfo, WebServiceConfig, WebServicePortProbe,
 };
-
 pub async fn get_web_server_status(
     Extension(state): Extension<Arc<AppState>>,
 ) -> Result<Json<Option<WebServerInfo>>, AppCommandError> {
@@ -33,9 +32,20 @@ pub async fn update_web_service_config(
     Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<UpdateWebServiceConfigParams>,
 ) -> Result<Json<WebServiceConfig>, AppCommandError> {
-    update_web_service_config_core(&state.db.conn, params.config)
-        .await
-        .map(Json)
+    let saved = update_web_service_config_core(&state.db.conn, params.config).await?;
+    if state
+        .web_server_state
+        .running
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        sync_web_tunnel_runtime(
+            &state.web_server_state.tunnel_runtime,
+            &saved.tunnel,
+            TunnelSyncReason::ConfigChanged,
+        )
+        .await;
+    }
+    Ok(Json(saved))
 }
 
 #[derive(Deserialize)]
