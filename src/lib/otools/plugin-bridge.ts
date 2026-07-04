@@ -1092,6 +1092,12 @@ async function dispatchOtoolsCommand(
     )
   }
 
+  if (command === "native_plugin_poll_events") {
+    return getTransport().call("native_plugin_poll_events", {
+      uuid: resolvePayloadPluginUuid(targetPluginUuid, payload),
+    })
+  }
+
   if (
     command === "native_plugin_listen_acquire" ||
     command === "native_plugin_listen_release"
@@ -1214,6 +1220,7 @@ function otoolsCompatBootstrap(config: {
   const transformCallbacks = new Map()
   const eventListeners = new Map()
   const nativeListeners = new Set()
+  const nativeListenerPluginRefs = new Map()
   let requestSeq = 0
   let callbackSeq = 0
   let eventSeq = 0
@@ -1423,8 +1430,19 @@ function otoolsCompatBootstrap(config: {
 
     while (nativeListeners.size > 0 || eventListeners.size > 0) {
       try {
-        const events = await postInvoke("__otools_poll_events", {})
-        if (Array.isArray(events)) {
+        const [bridgeEvents, ...nativeEventGroups] = await Promise.all([
+          postInvoke("__otools_poll_events", {}).catch(() => []),
+          ...Array.from(nativeListenerPluginRefs.keys()).map((pluginUuid) =>
+            postInvoke("native_plugin_poll_events", {
+              uuid: pluginUuid,
+            }).catch(() => [])
+          ),
+        ])
+
+        for (const events of [bridgeEvents, ...nativeEventGroups]) {
+          if (!Array.isArray(events)) {
+            continue
+          }
           for (const item of events) {
             dispatchNativeEnvelope(item)
           }
@@ -1443,10 +1461,6 @@ function otoolsCompatBootstrap(config: {
       throw new Error("listenNative handler required")
     }
 
-    await postInvoke("native_plugin_listen_acquire", {
-      uuid: targetUuid,
-    }).catch(() => null)
-
     const wrappedHandler = (event) => {
       if (typeof filter === "function" && !filter(event)) {
         return
@@ -1454,13 +1468,25 @@ function otoolsCompatBootstrap(config: {
       handler(event)
     }
     nativeListeners.add(wrappedHandler)
+    if (targetUuid) {
+      nativeListenerPluginRefs.set(
+        targetUuid,
+        Number(nativeListenerPluginRefs.get(targetUuid) || 0) + 1
+      )
+    }
     void pollNativeLoop()
 
     return async () => {
       nativeListeners.delete(wrappedHandler)
-      await postInvoke("native_plugin_listen_release", {
-        uuid: targetUuid,
-      }).catch(() => null)
+      if (targetUuid) {
+        const nextCount =
+          Number(nativeListenerPluginRefs.get(targetUuid) || 0) - 1
+        if (nextCount > 0) {
+          nativeListenerPluginRefs.set(targetUuid, nextCount)
+        } else {
+          nativeListenerPluginRefs.delete(targetUuid)
+        }
+      }
     }
   }
 
@@ -1847,6 +1873,16 @@ function otoolsCompatBootstrap(config: {
     listenNativePlugin(uuid, handler) {
       const targetUuid = resolvePluginUuid(uuid)
       return acquireNativeListener(targetUuid, handler, (event) => {
+        const eventPluginUuid =
+          event &&
+          event.payload &&
+          typeof event.payload === "object" &&
+          "pluginUuid" in event.payload
+            ? toStringSafe(event.payload.pluginUuid)
+            : ""
+        if (eventPluginUuid && targetUuid) {
+          return eventPluginUuid === targetUuid
+        }
         const topic =
           event &&
           event.payload &&

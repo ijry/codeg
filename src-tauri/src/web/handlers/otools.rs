@@ -773,6 +773,12 @@ pub async fn native_plugin_reload(
     Ok(Json(otools::native_plugin_reload(params.uuid).await?))
 }
 
+pub async fn native_plugin_poll_events(
+    Json(params): Json<UuidParams>,
+) -> Result<Json<Vec<Value>>, AppCommandError> {
+    Ok(Json(otools::native_plugin_poll_events(params.uuid).await?))
+}
+
 pub async fn otools_poll_events() -> Result<Json<Vec<Value>>, AppCommandError> {
     Ok(Json(otools::otools_poll_events().await?))
 }

@@ -1110,6 +1110,7 @@ mod tauri_app {
                 otools_commands::native_plugin_invoke,
                 otools_commands::native_plugin_probe,
                 otools_commands::native_plugin_reload,
+                otools_commands::native_plugin_poll_events,
                 otools_commands::otools_poll_events,
                 otools_commands::dev_get_workspace,
                 otools_commands::dev_create_plugin,

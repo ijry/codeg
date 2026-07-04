@@ -466,6 +466,10 @@ pub fn build_router(
             post(handlers::otools::native_plugin_reload),
         )
         .route(
+            "/native_plugin_poll_events",
+            post(handlers::otools::native_plugin_poll_events),
+        )
+        .route(
             "/otools_poll_events",
             post(handlers::otools::otools_poll_events),
         )

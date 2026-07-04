@@ -4714,6 +4714,7 @@ dependencies = [
  "otools-core",
  "otools-platform-filesystem",
  "otools-platform-host",
+ "otools-platform-native",
  "otools-plugin-config",
  "otools-plugin-dev",
  "otools-plugin-park",
@@ -4766,6 +4767,18 @@ dependencies = [
  "serde",
  "serde_json",
  "walkdir",
+]
+
+[[package]]
+name = "otools-platform-native"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "libloading 0.8.9",
+ "otools-core",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5909,6 +5922,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",

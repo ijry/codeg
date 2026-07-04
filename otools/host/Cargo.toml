@@ -9,6 +9,7 @@ otools-ai = { path = "../ai" }
 otools-core = { path = "../core" }
 otools-platform-host = { path = "../platform/host" }
 otools-platform-filesystem = { path = "../platform/filesystem" }
+otools-platform-native = { path = "../platform/native" }
 otools-plugin-state = { path = "../platform/plugin-state" }
 otools-plugin-config = { path = "../plugins/config/host" }
 otools-plugin-dev = { path = "../plugins/dev/host" }

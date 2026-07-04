@@ -591,9 +591,19 @@ pub async fn otools_native_invoke(
 ) -> Result<Value, AppCommandError> {
     let _ =
         otools_host::validate_plugin_id_for_host(&request.plugin_uuid).map_err(map_host_error)?;
-    crate::otools_bridge::invoke_blocking(&request.method, request.payload).map_err(|error| {
-        AppCommandError::task_execution_failed("OTools native invocation failed").with_detail(error)
+    let plugin_uuid = request.plugin_uuid;
+    let method = request.method;
+    let payload = request.payload;
+    let value = tokio::task::spawn_blocking(move || {
+        otools_host::native_plugin_invoke(plugin_uuid, method, payload).map_err(map_host_error)
     })
+    .await
+    .map_err(|error| {
+        AppCommandError::task_execution_failed("OTools native invocation task failed")
+            .with_detail(error.to_string())
+    })??;
+
+    Ok(value.get("data").cloned().unwrap_or(value))
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
@@ -612,30 +622,50 @@ pub async fn native_plugin_invoke(
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn native_plugin_probe(uuid: String) -> Result<Value, AppCommandError> {
-    let mut value = serde_json::json!({
-        "ok": true,
-        "pluginUuid": uuid.clone(),
-        "runtime": "codeg-plus",
-        "windowLabel": "otools",
-    });
+    let probe_uuid = uuid.clone();
+    let mut value = tokio::task::spawn_blocking(move || {
+        otools_host::native_plugin_probe(probe_uuid).map_err(map_host_error)
+    })
+    .await
+    .map_err(|error| {
+        AppCommandError::task_execution_failed("OTools native probe task failed")
+            .with_detail(error.to_string())
+    })??;
 
-    if let Ok(config) = otools_host::dev_get_native_config(uuid).await {
-        if let Some(object) = value.as_object_mut() {
-            object.insert("enabled".to_string(), Value::Bool(config.enabled));
-            object.insert(
-                "manifestPath".to_string(),
-                Value::String(config.manifest_path),
-            );
-        }
+    if let Some(object) = value.as_object_mut() {
+        object.insert("ok".to_string(), Value::Bool(true));
+        object.insert("pluginUuid".to_string(), Value::String(uuid));
+        object.insert("runtime".to_string(), Value::String("codeg-plus".to_string()));
+        object.insert("windowLabel".to_string(), Value::String("otools".to_string()));
     }
-
     Ok(value)
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn native_plugin_reload(uuid: String) -> Result<String, AppCommandError> {
+    let reload_uuid = uuid.clone();
+    let message = tokio::task::spawn_blocking(move || {
+        otools_host::native_plugin_reload(reload_uuid).map_err(map_host_error)
+    })
+    .await
+    .map_err(|error| {
+        AppCommandError::task_execution_failed("OTools native reload task failed")
+            .with_detail(error.to_string())
+    })??;
     otools_reload_all_plugins().await?;
-    Ok(format!("已刷新 Native 插件实例：{uuid}"))
+    Ok(format!("{message}：{uuid}"))
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn native_plugin_poll_events(uuid: String) -> Result<Vec<Value>, AppCommandError> {
+    tokio::task::spawn_blocking(move || {
+        otools_host::native_plugin_poll_events(uuid).map_err(map_host_error)
+    })
+    .await
+    .map_err(|error| {
+        AppCommandError::task_execution_failed("OTools native event poll task failed")
+            .with_detail(error.to_string())
+    })?
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]

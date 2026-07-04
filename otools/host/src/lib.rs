@@ -213,6 +213,28 @@ pub async fn otools_emit_tools_shell_shortcut(action: String) -> Result<(), Host
     Ok(())
 }
 
+pub fn native_plugin_invoke(
+    uuid: String,
+    method: String,
+    payload: Value,
+) -> Result<Value, HostError> {
+    otools_platform_native::native_plugin_invoke(uuid, method, payload)
+        .map_err(HostError::task_execution_failed)
+}
+
+pub fn native_plugin_reload(uuid: String) -> Result<String, HostError> {
+    otools_platform_native::native_plugin_reload(uuid).map_err(HostError::task_execution_failed)
+}
+
+pub fn native_plugin_probe(uuid: String) -> Result<Value, HostError> {
+    otools_platform_native::native_plugin_probe(uuid).map_err(HostError::task_execution_failed)
+}
+
+pub fn native_plugin_poll_events(uuid: String) -> Result<Vec<Value>, HostError> {
+    otools_platform_native::native_plugin_poll_events(uuid)
+        .map_err(HostError::task_execution_failed)
+}
+
 pub async fn otools_get_plugins_file_path() -> Result<String, HostError> {
     Ok(catalog::plugins_file_path().to_string_lossy().to_string())
 }
