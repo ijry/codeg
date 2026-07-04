@@ -702,6 +702,16 @@ async function dispatchOtoolsCommand(
     })
   }
 
+  if (command === "otools_host_repair_json_text") {
+    return getTransport().call(command, {
+      rawText: readStringField(payload, "rawText"),
+    })
+  }
+
+  if (command === "otools_get_plugins_file_path") {
+    return getTransport().call(command)
+  }
+
   if (command === "otools_emit_tools_shell_shortcut") {
     const action = normalizeToolsShellShortcutAction(
       readStringField(payload, "action")
@@ -1788,6 +1798,11 @@ function otoolsCompatBootstrap(config: {
     aiGenerateText(request) {
       return tauriInvoke("otools_ai_generate_text", {
         request: request && typeof request === "object" ? request : {},
+      })
+    },
+    hostRepairJsonText(rawText) {
+      return tauriInvoke("otools_host_repair_json_text", {
+        rawText: toStringSafe(rawText),
       })
     },
     hostListListenProcesses() {

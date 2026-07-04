@@ -207,6 +207,13 @@ pub async fn otools_host_info() -> Result<OtoolsHostInfo, AppCommandError> {
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_get_plugins_file_path() -> Result<String, AppCommandError> {
+    otools_host::otools_get_plugins_file_path()
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_get_plugin(plugin_uuid: String) -> Result<OtoolsPluginInfo, AppCommandError> {
     otools_host::otools_get_plugin(plugin_uuid)
         .await
@@ -277,6 +284,13 @@ pub async fn otools_ai_generate_text(
     request: OtoolsAiGenerateTextRequest,
 ) -> Result<String, AppCommandError> {
     otools_host::otools_ai_generate_text(request)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_host_repair_json_text(raw_text: String) -> Result<String, AppCommandError> {
+    otools_host::otools_host_repair_json_text(raw_text)
         .await
         .map_err(map_host_error)
 }

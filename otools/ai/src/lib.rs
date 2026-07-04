@@ -69,6 +69,25 @@ enum OtoolsAiChatHistoryStored {
     File(OtoolsAiChatHistoryFile),
 }
 
+fn cleanup_ai_json_content(raw: &str) -> String {
+    let mut text = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```JSON")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+        .to_string();
+
+    if let Some(rest) = text.strip_prefix("json\n") {
+        text = rest.to_string();
+    } else if let Some(rest) = text.strip_prefix("json\r\n") {
+        text = rest.to_string();
+    }
+
+    text.trim().to_string()
+}
+
 pub fn normalize_ai_provider_alias(provider: Option<&str>) -> String {
     let normalized = provider.unwrap_or("openai").trim().to_ascii_lowercase();
     if normalized.is_empty() {
@@ -225,6 +244,41 @@ pub async fn generate_text(
         text,
         provider,
         model: settings.model.trim().to_string(),
+    })
+}
+
+pub async fn repair_json_text(raw_text: String) -> Result<String, HostError> {
+    let source = raw_text.trim();
+    if source.is_empty() {
+        return Err(HostError::invalid_input("JSON text is required"));
+    }
+
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(source) {
+        return serde_json::to_string_pretty(&parsed).map_err(|error| {
+            HostError::task_execution_failed("Failed to format JSON")
+                .with_detail(error.to_string())
+        });
+    }
+
+    let raw_output = generate_text(OtoolsAiGenerateTextRequest {
+        ai_options: OtoolsAiConfigInput::default(),
+        system_prompt: "You repair invalid JSON. Return only the final JSON payload with no markdown, explanation, or comments.".to_string(),
+        user_prompt: format!("Repair this text into valid JSON:\n\n{source}"),
+        temperature: Some(0.1),
+        max_tokens: Some(2048),
+    })
+    .await?
+    .text;
+
+    let candidate = cleanup_ai_json_content(&raw_output);
+    let repaired = serde_json::from_str::<serde_json::Value>(&candidate).map_err(|error| {
+        HostError::task_execution_failed("AI returned invalid JSON")
+            .with_detail(error.to_string())
+    })?;
+
+    serde_json::to_string_pretty(&repaired).map_err(|error| {
+        HostError::task_execution_failed("Failed to serialize repaired JSON")
+            .with_detail(error.to_string())
     })
 }
 
@@ -494,5 +548,17 @@ mod tests {
         assert_eq!(items[0].content, "hi");
         assert!(!items[0].id.is_empty());
         assert!(!items[0].created_at.is_empty());
+    }
+
+    #[test]
+    fn cleans_json_markdown_wrappers() {
+        assert_eq!(
+            cleanup_ai_json_content("```json\n{\"ok\":true}\n```"),
+            "{\"ok\":true}"
+        );
+        assert_eq!(
+            cleanup_ai_json_content("json\r\n{\"ok\":true}"),
+            "{\"ok\":true}"
+        );
     }
 }

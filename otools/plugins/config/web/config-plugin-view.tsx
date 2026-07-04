@@ -540,7 +540,8 @@ export function ConfigPluginView({
               2. 保存 `basic_settings` 时，当前窗口会同步主题、主题色和语言。
             </p>
             <p className="text-xs leading-5 text-muted-foreground">
-              3. `launchAtStartup` 先保留字段，不伪造宿主原生能力。
+              3. `launchAtStartup` 已接入本地宿主启动项能力；Web
+              模式仅保留字段。
             </p>
           </ConfigPanel>
 

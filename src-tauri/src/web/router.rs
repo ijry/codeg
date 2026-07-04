@@ -293,6 +293,10 @@ pub fn build_router(
             post(handlers::otools::otools_host_info),
         )
         .route(
+            "/otools_get_plugins_file_path",
+            post(handlers::otools::otools_get_plugins_file_path),
+        )
+        .route(
             "/otools_get_plugin",
             post(handlers::otools::otools_get_plugin),
         )
@@ -331,6 +335,10 @@ pub fn build_router(
         .route(
             "/otools_ai_generate_text",
             post(handlers::otools::otools_ai_generate_text),
+        )
+        .route(
+            "/otools_host_repair_json_text",
+            post(handlers::otools::otools_host_repair_json_text),
         )
         .route(
             "/otools_ai_save_chat_history",

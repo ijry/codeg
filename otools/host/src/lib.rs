@@ -185,6 +185,10 @@ pub async fn otools_ai_generate_text(
     otools_ai::generate_text(request).await.map(|result| result.text)
 }
 
+pub async fn otools_host_repair_json_text(raw_text: String) -> Result<String, HostError> {
+    otools_ai::repair_json_text(raw_text).await
+}
+
 pub async fn otools_ai_load_chat_history(
     prefix: String,
 ) -> Result<Vec<OtoolsAiChatMessageRecord>, HostError> {
@@ -201,6 +205,10 @@ pub async fn otools_ai_save_chat_history(
 pub async fn otools_emit_tools_shell_shortcut(action: String) -> Result<(), HostError> {
     validate_tools_shell_shortcut_action(&action)?;
     Ok(())
+}
+
+pub async fn otools_get_plugins_file_path() -> Result<String, HostError> {
+    Ok(catalog::plugins_file_path().to_string_lossy().to_string())
 }
 
 pub async fn dev_get_workspace() -> Result<DevWorkspace, HostError> {
