@@ -1,0 +1,17 @@
+{
+  "uuid": "otools-park",
+  "packid": "otools-park",
+  "displayName": "Plugin Market",
+  "displayNameCN": "插件市场",
+  "developerName": "OTools",
+  "summary": "Browse, install, update, and remove OTools plugins.",
+  "version": "builtin",
+  "icon": "🦦",
+  "key": ["park", "plugin", "market", "store", "插件", "插件市场"],
+  "entry": "builtin://park",
+  "builtin": true,
+  "builtinOrder": 10,
+  "source": "builtin",
+  "openInBrowser": false,
+  "permissions": []
+}

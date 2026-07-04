@@ -1,0 +1,17 @@
+{
+  "uuid": "otools-dev",
+  "packid": "otools-dev",
+  "displayName": "Dev Studio",
+  "displayNameCN": "插件开发工坊",
+  "developerName": "OTools",
+  "summary": "Create, inspect, debug, package, and publish OTools plugins.",
+  "version": "builtin",
+  "icon": "🧩",
+  "key": ["dev", "developer", "plugin-dev", "plugin", "开发", "插件开发", "脚手架"],
+  "entry": "builtin://dev",
+  "builtin": true,
+  "builtinOrder": 30,
+  "source": "builtin",
+  "openInBrowser": false,
+  "permissions": []
+}

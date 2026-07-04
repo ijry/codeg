@@ -14,8 +14,8 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 
-use crate::catalog::{self, ToolPlugin};
-use crate::{HostError, HostErrorCode};
+use otools_core::catalog::{self, ToolPlugin};
+use otools_core::{HostError, HostErrorCode};
 
 const DEV_STATE_FILE_VERSION: u64 = 1;
 const DEV_LOCAL_STATE_FILE_VERSION: u64 = 1;

@@ -14,11 +14,20 @@ import {
   isDesktop,
 } from "@/lib/transport"
 import {
+  getOtoolsConfig,
+  getOtoolsConfigValue,
   getOtoolsPluginAsset,
   getOtoolsPluginState,
   invokeOtoolsNative,
+  saveOtoolsConfig,
+  saveOtoolsConfigValue,
   setOtoolsPluginState,
 } from "./api"
+import {
+  normalizeConfigValueForSave,
+  OTOOLS_GLOBAL_BASIC_SETTINGS_KEY,
+  syncBasicSettingsToHost,
+} from "./config-runtime"
 import type {
   OtoolsBridgeRequest,
   OtoolsBridgeResponse,
@@ -103,6 +112,13 @@ const FILE_ICON_COMMANDS = new Set(["otools_get_file_icon"])
 const NOTIFICATION_COMMANDS = new Set([
   "__otools_show_notification",
   "otools_show_notification",
+])
+
+const CONFIG_COMMANDS = new Set([
+  "get_otools_config",
+  "save_otools_config",
+  "get_otools_config_value",
+  "save_otools_config_value",
 ])
 const HOST_FORWARD_PREFIXES = ["dev_", "park_"]
 
@@ -327,6 +343,10 @@ async function dispatchOtoolsCommand(
     return getTransport().call(command, asRecord(payload) ?? {})
   }
 
+  if (CONFIG_COMMANDS.has(command)) {
+    return dispatchConfigCommand(command, payload)
+  }
+
   if (OPEN_EXTERNAL_COMMANDS.has(command)) {
     return openUrl(readStringField(payload, "url"))
   }
@@ -421,6 +441,13 @@ async function dispatchOtoolsCommand(
       return
     case "plugin:window|get_all_windows":
       return [WINDOW_LABEL]
+    case "otools_get_launch_at_startup":
+      return false
+    case "otools_set_launch_at_startup":
+      if (readBooleanField(payload, "enabled")) {
+        throw new Error("codeg-plus 暂未实现 launch-at-startup 宿主能力")
+      }
+      return false
     default:
       break
   }
@@ -461,6 +488,45 @@ async function dispatchOtoolsCommand(
   }
 
   return invokeOtoolsNative(targetPluginUuid, command, payload)
+}
+
+async function dispatchConfigCommand(
+  command: string,
+  payload: unknown
+): Promise<unknown> {
+  const body = asRecord(payload)
+  switch (command) {
+    case "get_otools_config":
+      return getOtoolsConfig()
+    case "save_otools_config":
+      return saveOtoolsConfig(
+        (body && "config" in body ? body.config : payload) as Awaited<
+          ReturnType<typeof getOtoolsConfig>
+        >
+      )
+    case "get_otools_config_value":
+      return getOtoolsConfigValue(readStringField(payload, "key"))
+    case "save_otools_config_value":
+      return saveNormalizedConfigValue(
+        readStringField(payload, "key"),
+        body?.value ?? null
+      )
+    default:
+      return null
+  }
+}
+
+async function saveNormalizedConfigValue(
+  key: string,
+  value: unknown
+): Promise<void> {
+  const normalizedKey = String(key || "").trim()
+  const normalizedValue = normalizeConfigValueForSave(normalizedKey, value)
+  await saveOtoolsConfigValue(normalizedKey, normalizedValue)
+
+  if (normalizedKey === OTOOLS_GLOBAL_BASIC_SETTINGS_KEY) {
+    await syncBasicSettingsToHost(normalizedValue as Record<string, unknown>)
+  }
 }
 
 function injectCompatBridge(

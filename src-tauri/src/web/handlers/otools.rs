@@ -44,6 +44,25 @@ pub struct PluginStateSetParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConfigValueGetParams {
+    pub key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigValueSetParams {
+    pub key: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveOtoolsConfigParams {
+    pub config: otools::OtoolsConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PathParams {
     pub path: String,
 }
@@ -265,6 +284,30 @@ pub async fn otools_get_plugin_asset(
     Ok(Json(
         otools::otools_get_plugin_asset(params.plugin_uuid, params.asset_path).await?,
     ))
+}
+
+pub async fn get_otools_config() -> Result<Json<otools::OtoolsConfig>, AppCommandError> {
+    Ok(Json(otools::get_otools_config().await?))
+}
+
+pub async fn save_otools_config(
+    Json(params): Json<SaveOtoolsConfigParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_config(params.config).await?;
+    Ok(Json(()))
+}
+
+pub async fn get_otools_config_value(
+    Json(params): Json<ConfigValueGetParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    Ok(Json(otools::get_otools_config_value(params.key).await?))
+}
+
+pub async fn save_otools_config_value(
+    Json(params): Json<ConfigValueSetParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_config_value(params.key, params.value).await?;
+    Ok(Json(()))
 }
 
 pub async fn otools_native_invoke(

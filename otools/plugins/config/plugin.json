@@ -1,0 +1,17 @@
+{
+  "uuid": "otools-config",
+  "packid": "otools-config",
+  "displayName": "Settings",
+  "displayNameCN": "系统设置",
+  "developerName": "OTools",
+  "summary": "Configure OTools host preferences and builtin plugin behavior.",
+  "version": "builtin",
+  "icon": "⚙️",
+  "key": ["config", "settings", "preferences", "设置", "配置"],
+  "entry": "builtin://config",
+  "builtin": true,
+  "builtinOrder": 20,
+  "source": "builtin",
+  "openInBrowser": false,
+  "permissions": []
+}

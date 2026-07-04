@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use crate::catalog::{self, ToolPlugin, ToolPluginAutostart, ToolPluginShutdownHook};
-use crate::{HostError, HostErrorCode};
+use otools_core::catalog::{self, ToolPlugin, ToolPluginAutostart, ToolPluginShutdownHook};
+use otools_core::{HostError, HostErrorCode};
 
 const PARK_PLUGIN_MARKET_FILE_VERSION: u64 = 1;
 const MARKET_PLUGIN_SOURCE: &str = "market";

@@ -209,66 +209,54 @@ pub fn write_plugins_file(path: &Path, plugins: &[ToolPlugin]) -> Result<(), Hos
 }
 
 pub fn inner_plugins() -> Vec<ToolPlugin> {
-    let mut plugins = vec![
-        ToolPlugin {
-            packid: "otools-park".to_string(),
-            display_name: "Plugin Market".to_string(),
-            display_name_cn: Some("插件市场".to_string()),
-            icon: "🦦".to_string(),
-            key: vec![
-                "park".to_string(),
-                "plugin".to_string(),
-                "market".to_string(),
-                "store".to_string(),
-                "插件".to_string(),
-                "插件市场".to_string(),
-            ],
-            entry: "builtin://park".to_string(),
-            builtin: Some(true),
-            ..ToolPlugin::default()
-        },
-        ToolPlugin {
-            packid: "otools-config".to_string(),
-            display_name: "Settings".to_string(),
-            display_name_cn: Some("系统设置".to_string()),
-            icon: "⚙️".to_string(),
-            key: vec![
-                "config".to_string(),
-                "settings".to_string(),
-                "preferences".to_string(),
-                "设置".to_string(),
-                "配置".to_string(),
-            ],
-            entry: "builtin://config".to_string(),
-            builtin: Some(true),
-            ..ToolPlugin::default()
-        },
-        ToolPlugin {
-            packid: "otools-dev".to_string(),
-            display_name: "Dev Studio".to_string(),
-            display_name_cn: Some("插件开发工坊".to_string()),
-            icon: "🧩".to_string(),
-            key: vec![
-                "dev".to_string(),
-                "developer".to_string(),
-                "plugin-dev".to_string(),
-                "plugin".to_string(),
-                "开发".to_string(),
-                "插件开发".to_string(),
-                "脚手架".to_string(),
-            ],
-            entry: "builtin://dev".to_string(),
-            builtin: Some(true),
-            ..ToolPlugin::default()
-        },
-    ];
-
-    for plugin in &mut plugins {
-        if plugin.uuid.trim().is_empty() {
-            plugin.uuid = plugin.packid.clone();
+    let mut plugins = Vec::<(i64, ToolPlugin)>::new();
+    for root in builtin_plugin_roots() {
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let manifest_path = path.join("plugin.json");
+            let Ok(value) = read_json_file::<Value>(&manifest_path) else {
+                continue;
+            };
+            let order = value
+                .get("builtinOrder")
+                .and_then(Value::as_i64)
+                .unwrap_or(i64::MAX);
+            let Ok(mut plugin) = serde_json::from_value::<ToolPlugin>(value) else {
+                continue;
+            };
+            plugin.builtin = Some(true);
+            plugin.source = Some("builtin".to_string());
+            if plugin.uuid.trim().is_empty() {
+                plugin.uuid = plugin.packid.clone();
+            }
+            plugins.push((order, plugin));
         }
     }
-    plugins
+    plugins.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.packid.cmp(&right.1.packid))
+    });
+    plugins.into_iter().map(|(_, plugin)| plugin).collect()
+}
+
+fn builtin_plugin_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(value) = std::env::var("CODEG_OTOOLS_BUILTIN_PLUGIN_DIR") {
+        roots.push(PathBuf::from(value));
+    }
+    roots.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("plugins"),
+    );
+    roots
 }
 
 pub fn is_dev_debug_plugin(plugin: &ToolPlugin) -> bool {

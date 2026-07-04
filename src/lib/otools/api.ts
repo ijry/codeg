@@ -14,6 +14,7 @@ import type {
   DevPluginInput,
   DevWorkspace,
   OtoolsAssetPayload,
+  OtoolsConfig,
   OtoolsHostInfo,
   OtoolsNavigationResult,
   OtoolsPluginInfo,
@@ -79,6 +80,27 @@ export async function getOtoolsPluginAsset(
     pluginUuid,
     assetPath,
   })
+}
+
+export async function getOtoolsConfig(): Promise<OtoolsConfig> {
+  return getTransport().call("get_otools_config")
+}
+
+export async function saveOtoolsConfig(config: OtoolsConfig): Promise<void> {
+  return getTransport().call("save_otools_config", { config })
+}
+
+export async function getOtoolsConfigValue<T = unknown>(
+  key: string
+): Promise<T | null> {
+  return getTransport().call("get_otools_config_value", { key })
+}
+
+export async function saveOtoolsConfigValue(
+  key: string,
+  value: unknown
+): Promise<void> {
+  return getTransport().call("save_otools_config_value", { key, value })
 }
 
 export async function invokeOtoolsNative(

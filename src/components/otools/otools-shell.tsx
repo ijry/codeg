@@ -15,31 +15,22 @@ import {
   Home,
   Package,
   RefreshCw,
-  Search,
-  ShieldCheck,
   Store,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { getServerBaseUrl } from "@/lib/transport"
 import { cn } from "@/lib/utils"
 import {
+  getBuiltinHomeTargets,
+  renderBuiltinPluginView,
+} from "../../../otools/plugins/web-registry"
+import {
   buildOtoolsPluginUrl,
-  getDevWorkspace,
   getOtoolsHostInfo,
-  getParkWorkspace,
-  installParkPlugin,
   listOtoolsPlugins,
-  uninstallParkPlugin,
 } from "@/lib/otools/api"
-import type {
-  DevWorkspace,
-  OtoolsHostInfo,
-  OtoolsPluginInfo,
-  ParkCatalogItem,
-  ParkWorkspace,
-} from "@/lib/otools/types"
+import type { OtoolsHostInfo, OtoolsPluginInfo } from "@/lib/otools/types"
 import { OtoolsPluginFrame } from "./otools-plugin-frame"
 
 type ShellView = { kind: "home" } | { kind: "plugin"; pluginId: string }
@@ -79,12 +70,8 @@ export function OtoolsShell() {
     if (view.kind !== "plugin") return null
     return plugins.find((plugin) => plugin.uuid === view.pluginId) ?? null
   }, [plugins, view])
-  const developerPlugin = useMemo(
-    () => plugins.find((plugin) => plugin.entry === "builtin://dev") ?? null,
-    [plugins]
-  )
-  const marketPlugin = useMemo(
-    () => plugins.find((plugin) => plugin.entry === "builtin://park") ?? null,
+  const builtinHomeTargets = useMemo(
+    () => getBuiltinHomeTargets(plugins),
     [plugins]
   )
 
@@ -188,9 +175,11 @@ export function OtoolsShell() {
             loading={loading}
             nativeCount={nativeCount}
             onOpenDeveloper={() =>
-              developerPlugin && openPlugin(developerPlugin)
+              builtinHomeTargets.dev && openPlugin(builtinHomeTargets.dev)
             }
-            onOpenMarket={() => marketPlugin && openPlugin(marketPlugin)}
+            onOpenMarket={() =>
+              builtinHomeTargets.park && openPlugin(builtinHomeTargets.park)
+            }
             onOpenPlugin={openPlugin}
             plugins={plugins}
           />
@@ -348,424 +337,6 @@ function OtoolsHomeView({
   )
 }
 
-function OtoolsDeveloperView({
-  hostInfo,
-  loading,
-  onRefresh,
-  plugins,
-}: {
-  hostInfo: OtoolsHostInfo | null
-  loading: boolean
-  onRefresh: () => void
-  plugins: OtoolsPluginInfo[]
-}) {
-  const [workspace, setWorkspace] = useState<DevWorkspace | null>(null)
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
-  const [workspaceLoading, setWorkspaceLoading] = useState(true)
-  const nativePlugins = plugins.filter((plugin) => plugin.nativeEnabled)
-  const devPlugins = workspace?.items ?? []
-
-  const loadWorkspace = useCallback(async () => {
-    setWorkspaceLoading(true)
-    setWorkspaceError(null)
-    try {
-      setWorkspace(await getDevWorkspace())
-    } catch (err) {
-      setWorkspaceError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setWorkspaceLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void loadWorkspace()
-  }, [loadWorkspace])
-
-  const refresh = useCallback(() => {
-    onRefresh()
-    void loadWorkspace()
-  }, [loadWorkspace, onRefresh])
-
-  return (
-    <div className="min-h-0 flex-1 overflow-auto p-6">
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">开发者工具</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            用于确认 OTools 宿主路径、插件发现结果、native 隔离和双 transport
-            状态。
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          onClick={refresh}
-          disabled={loading || workspaceLoading}
-        >
-          <RefreshCw
-            className={cn(
-              "h-4 w-4",
-              (loading || workspaceLoading) && "animate-spin"
-            )}
-          />
-          Refresh
-        </Button>
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-3">
-        <InfoPanel title="Host" icon={<ShieldCheck className="h-4 w-4" />}>
-          <InfoRow label="Platform" value={hostInfo?.platform ?? "-"} />
-          <InfoRow label="Plugins" value={String(hostInfo?.pluginCount ?? 0)} />
-          <InfoRow label="Data dir" value={hostInfo?.dataDir ?? "-"} />
-        </InfoPanel>
-
-        <InfoPanel title="Runtime" icon={<Code2 className="h-4 w-4" />}>
-          <InfoRow label="Plugin iframe" value="isolated srcDoc" />
-          <InfoRow label="Native bridge" value="dedicated runtime" />
-          <InfoRow label="Transport" value="Tauri + HTTP/WS" />
-        </InfoPanel>
-
-        <InfoPanel title="Catalog" icon={<Package className="h-4 w-4" />}>
-          <InfoRow
-            label="Native plugins"
-            value={String(nativePlugins.length)}
-          />
-          <InfoRow label="Dev records" value={String(devPlugins.length)} />
-          <InfoRow label="Packs dir" value={workspace?.packsDir ?? "-"} />
-        </InfoPanel>
-      </div>
-
-      {workspaceError ? (
-        <div className="mt-6 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-          {workspaceError}
-        </div>
-      ) : null}
-
-      <div className="mt-6 rounded-xl border bg-card p-4 shadow-sm">
-        <div className="mb-3 text-sm font-medium">Workspace files</div>
-        <div className="space-y-2">
-          {[
-            workspace?.metaStateFilePath,
-            workspace?.bindingStateFilePath,
-            workspace?.packsDir,
-            ...(hostInfo?.pluginRoots ?? []),
-          ]
-            .filter(Boolean)
-            .map((root) => (
-              <div
-                key={root}
-                className="rounded-md bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground"
-              >
-                {root}
-              </div>
-            ))}
-          {!workspace && !hostInfo?.pluginRoots.length ? (
-            <div className="text-sm text-muted-foreground">
-              No host info loaded.
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="mt-6 rounded-xl border bg-card shadow-sm">
-        <div className="border-b px-4 py-3 text-sm font-medium">
-          Dev workspace
-        </div>
-        <div className="divide-y">
-          {devPlugins.map((plugin) => (
-            <div
-              key={plugin.uuid}
-              className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[1fr_1fr_auto]"
-            >
-              <div className="min-w-0">
-                <div className="truncate font-medium">
-                  {plugin.displayNameCn || plugin.displayName || plugin.packid}
-                </div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {plugin.uuid}
-                </div>
-              </div>
-              <div className="min-w-0 text-xs text-muted-foreground">
-                <div className="truncate">
-                  {plugin.directoryBound
-                    ? plugin.boundDirectoryPath
-                    : "未绑定开发目录"}
-                </div>
-                <div className="truncate">{plugin.devUrl}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                {plugin.debugEnabled ? (
-                  <Badge variant="outline">Debug</Badge>
-                ) : null}
-                <Badge variant="secondary">{plugin.version || "0.0.0"}</Badge>
-              </div>
-            </div>
-          ))}
-          {!devPlugins.length ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              暂无开发插件。已迁移 `dev_get_workspace`
-              等原始命令，创建入口后会写入 OTools dev state。
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function OtoolsMarketView({
-  onOpenPlugin,
-  onRefresh,
-  plugins,
-  query,
-  setQuery,
-}: {
-  onOpenPlugin: (plugin: OtoolsPluginInfo) => void
-  onRefresh: () => void
-  plugins: OtoolsPluginInfo[]
-  query: string
-  setQuery: (value: string) => void
-}) {
-  const [category, setCategory] = useState("hot")
-  const [workspace, setWorkspace] = useState<ParkWorkspace | null>(null)
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
-  const [workspaceLoading, setWorkspaceLoading] = useState(true)
-  const [actionKey, setActionKey] = useState<string | null>(null)
-
-  const loadWorkspace = useCallback(async () => {
-    setWorkspaceLoading(true)
-    setWorkspaceError(null)
-    try {
-      setWorkspace(await getParkWorkspace(category))
-    } catch (err) {
-      setWorkspaceError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setWorkspaceLoading(false)
-    }
-  }, [category])
-
-  useEffect(() => {
-    void loadWorkspace()
-  }, [loadWorkspace])
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    const items = workspace?.items ?? []
-    if (!needle) return items
-    return items.filter((plugin) =>
-      [
-        plugin.uuid,
-        plugin.packid,
-        plugin.displayName,
-        plugin.displayNameCn,
-        plugin.developerName,
-        plugin.summary,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(needle)
-    )
-  }, [workspace?.items, query])
-
-  const refreshMarket = useCallback(() => {
-    onRefresh()
-    void loadWorkspace()
-  }, [loadWorkspace, onRefresh])
-
-  const findInstalledPlugin = useCallback(
-    (item: ParkCatalogItem) =>
-      plugins.find(
-        (plugin) => plugin.uuid === item.uuid || plugin.packid === item.packid
-      ),
-    [plugins]
-  )
-
-  const runInstallAction = useCallback(
-    async (item: ParkCatalogItem) => {
-      const key = item.uuid || item.packid
-      setActionKey(key)
-      try {
-        if (item.installed && !item.updateAvailable) {
-          const installed = findInstalledPlugin(item)
-          if (installed) onOpenPlugin(installed)
-          return
-        }
-        await installParkPlugin(item)
-        refreshMarket()
-      } finally {
-        setActionKey(null)
-      }
-    },
-    [findInstalledPlugin, onOpenPlugin, refreshMarket]
-  )
-
-  const runUninstallAction = useCallback(
-    async (item: ParkCatalogItem) => {
-      const key = item.uuid || item.packid
-      setActionKey(key)
-      try {
-        await uninstallParkPlugin(item)
-        refreshMarket()
-      } finally {
-        setActionKey(null)
-      }
-    },
-    [refreshMarket]
-  )
-
-  return (
-    <div className="min-h-0 flex-1 overflow-auto p-6">
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">插件市场</h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            已迁移 MenuGit Park 的 workspace/install/offline/uninstall
-            宿主命令。远程不可用时回退到本地目录。
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline">
-            {workspace?.items.length ?? 0} market items
-          </Badge>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={refreshMarket}
-            disabled={workspaceLoading}
-          >
-            <RefreshCw
-              className={cn("h-4 w-4", workspaceLoading && "animate-spin")}
-            />
-            Refresh
-          </Button>
-        </div>
-      </div>
-
-      {workspace?.note ? (
-        <div className="mb-4 rounded-xl border bg-card p-3 text-sm text-muted-foreground">
-          {workspace.note}
-        </div>
-      ) : null}
-
-      {workspaceError ? (
-        <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          {workspaceError}
-        </div>
-      ) : null}
-
-      <div className="mb-4 flex flex-wrap gap-2">
-        {(workspace?.categories ?? []).map((item) => (
-          <Button
-            key={item.key}
-            variant={item.key === category ? "default" : "outline"}
-            size="sm"
-            onClick={() => setCategory(item.key)}
-          >
-            {item.label}
-            {item.count ? (
-              <Badge variant="secondary" className="ml-1">
-                {item.count}
-              </Badge>
-            ) : null}
-          </Button>
-        ))}
-      </div>
-
-      <div className="relative mb-4 max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          className="pl-9"
-          placeholder="Search plugins"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </div>
-
-      {filtered.length ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {filtered.map((item) => {
-            const key = item.uuid || item.packid
-            const installedPlugin = findInstalledPlugin(item)
-            return (
-              <div
-                key={key}
-                className="min-h-40 rounded-xl border bg-card p-4 shadow-sm"
-              >
-                <div className="mb-3 flex items-start justify-between gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-background text-lg">
-                    {isShortTextIcon(item.icon) ? (
-                      item.icon
-                    ) : item.icon ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={item.icon}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <Store className="h-4 w-4" />
-                    )}
-                  </span>
-                  <div className="flex flex-wrap justify-end gap-1">
-                    {item.installed ? (
-                      <Badge variant="outline">Installed</Badge>
-                    ) : null}
-                    {item.official ? (
-                      <Badge variant="secondary">Official</Badge>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="truncate font-medium">
-                  {item.displayNameCn || item.displayName || item.packid}
-                </div>
-                <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                  {item.summary || item.packid}
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span className="truncate">
-                    {item.developerName || "OTools"}
-                  </span>
-                  <span>{item.version || "-"}</span>
-                </div>
-                <div className="mt-4 flex gap-2">
-                  <Button
-                    size="sm"
-                    className="flex-1"
-                    disabled={actionKey === key}
-                    onClick={() => void runInstallAction(item)}
-                  >
-                    {item.installed && installedPlugin
-                      ? "打开"
-                      : item.updateAvailable
-                        ? "更新"
-                        : "安装"}
-                  </Button>
-                  {item.installed ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={actionKey === key}
-                      onClick={() => void runUninstallAction(item)}
-                    >
-                      卸载
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      ) : (
-        <EmptyState
-          icon={<Store className="h-8 w-8" />}
-          title="没有匹配插件"
-          description="换一个关键词，或刷新宿主插件目录。"
-        />
-      )}
-    </div>
-  )
-}
-
 function OtoolsPluginView({
   hostInfo,
   loading,
@@ -785,30 +356,17 @@ function OtoolsPluginView({
   plugin: OtoolsPluginInfo
   plugins: OtoolsPluginInfo[]
 }) {
-  const builtin = plugin.entry.trim().toLowerCase()
-
-  if (builtin === "builtin://dev") {
-    return (
-      <OtoolsDeveloperView
-        hostInfo={hostInfo}
-        loading={loading}
-        onRefresh={onRefresh}
-        plugins={plugins}
-      />
-    )
-  }
-
-  if (builtin === "builtin://park") {
-    return (
-      <OtoolsMarketView
-        onOpenPlugin={onOpenPlugin}
-        onRefresh={onRefresh}
-        plugins={plugins}
-        query={marketQuery}
-        setQuery={onMarketQueryChange}
-      />
-    )
-  }
+  const builtinView = renderBuiltinPluginView(plugin, {
+    hostInfo,
+    loading,
+    marketQuery,
+    onMarketQueryChange,
+    onOpenPlugin,
+    onRefresh,
+    plugin,
+    plugins,
+  })
+  if (builtinView) return builtinView
 
   return (
     <>
@@ -906,35 +464,6 @@ function MetricCard({ label, value }: { label: string; value: number }) {
     <div className="min-w-20 rounded-xl border bg-background/60 px-3 py-2">
       <div className="text-lg font-semibold">{value}</div>
       <div className="text-xs text-muted-foreground">{label}</div>
-    </div>
-  )
-}
-
-function InfoPanel({
-  children,
-  icon,
-  title,
-}: {
-  children: ReactNode
-  icon: ReactNode
-  title: string
-}) {
-  return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-        {icon}
-        {title}
-      </div>
-      <div className="space-y-2">{children}</div>
-    </div>
-  )
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[88px_1fr] gap-2 text-xs">
-      <div className="text-muted-foreground">{label}</div>
-      <div className="min-w-0 truncate font-mono">{value}</div>
     </div>
   )
 }

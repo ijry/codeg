@@ -32,6 +32,58 @@ export interface OtoolsHostInfo {
   platform: string
 }
 
+export interface OtoolsConfigTab {
+  title: string
+  name: string
+  content: string
+  closable: boolean
+  pluginUuid?: string | null
+}
+
+export interface OtoolsConfig {
+  tabs: OtoolsConfigTab[]
+  active_tab: string
+}
+
+export type OtoolsThemeMode = "system" | "light" | "dark"
+
+export type OtoolsThemeAccent =
+  | "classic"
+  | "violet"
+  | "emerald"
+  | "amber"
+  | "pink"
+
+export type OtoolsLocale =
+  | "zh-CN"
+  | "zh-TW"
+  | "en-US"
+  | "ja-JP"
+  | "ko-KR"
+  | "de-DE"
+  | "fr-FR"
+  | "pt-PT"
+  | "ru-RU"
+  | "es-ES"
+  | "ar-SA"
+
+export type OtoolsLocaleSetting = "system" | OtoolsLocale
+
+export interface OtoolsBasicSettings {
+  themeMode: OtoolsThemeMode
+  themeAccent: OtoolsThemeAccent
+  launchAtStartup: boolean
+  locale: OtoolsLocaleSetting
+  resolvedLocale?: OtoolsLocale | null
+}
+
+export interface OtoolsAiSettings {
+  provider: string
+  baseUrl: string
+  apiKey: string
+  model: string
+}
+
 export interface DevVersionRecord {
   id: string
   version: string

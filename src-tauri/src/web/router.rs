@@ -284,6 +284,22 @@ pub fn build_router(
             post(handlers::otools::otools_get_plugin_asset),
         )
         .route(
+            "/get_otools_config",
+            post(handlers::otools::get_otools_config),
+        )
+        .route(
+            "/save_otools_config",
+            post(handlers::otools::save_otools_config),
+        )
+        .route(
+            "/get_otools_config_value",
+            post(handlers::otools::get_otools_config_value),
+        )
+        .route(
+            "/save_otools_config_value",
+            post(handlers::otools::save_otools_config_value),
+        )
+        .route(
             "/otools_native_invoke",
             post(handlers::otools::otools_native_invoke),
         )

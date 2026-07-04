@@ -5,9 +5,9 @@ use crate::app_error::{AppCommandError, AppErrorCode};
 pub use otools_host::{
     DevBindDirectoryInput, DevNativeBuildJobSnapshot, DevNativeBuildJobStart, DevNativeConfig,
     DevPluginActionResult, DevPluginInput, DevPluginUpdateInput, DevPublishVersionInput,
-    DevWorkspace, OtoolsAssetPayload, OtoolsHostInfo, OtoolsNativeInvokeRequest,
-    OtoolsNavigationResult, OtoolsPluginInfo, ParkInstallInput, ParkInstallResult,
-    ParkUninstallInput, ParkUninstallResult, ParkWorkspace, WebviewDirEntry,
+    DevWorkspace, OtoolsAssetPayload, OtoolsConfig, OtoolsConfigTab, OtoolsHostInfo,
+    OtoolsNativeInvokeRequest, OtoolsNavigationResult, OtoolsPluginInfo, ParkInstallInput,
+    ParkInstallResult, ParkUninstallInput, ParkUninstallResult, ParkWorkspace, WebviewDirEntry,
     WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
 };
 
@@ -115,6 +115,34 @@ pub async fn otools_get_plugin_asset(
     asset_path: String,
 ) -> Result<OtoolsAssetPayload, AppCommandError> {
     otools_host::otools_get_plugin_asset(plugin_uuid, asset_path)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_config() -> Result<OtoolsConfig, AppCommandError> {
+    otools_host::get_otools_config()
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_config(config: OtoolsConfig) -> Result<(), AppCommandError> {
+    otools_host::save_otools_config(config)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_config_value(key: String) -> Result<Option<Value>, AppCommandError> {
+    otools_host::get_otools_config_value(key)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_config_value(key: String, value: Value) -> Result<(), AppCommandError> {
+    otools_host::save_otools_config_value(key, value)
         .await
         .map_err(map_host_error)
 }
