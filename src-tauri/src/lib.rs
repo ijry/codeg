@@ -1058,6 +1058,7 @@ mod tauri_app {
                 otools_commands::otools_host_list_listen_processes,
                 otools_commands::otools_host_kill_process,
                 otools_commands::otools_host_run_package_action,
+                otools_commands::otools_host_set_linux_privilege_password,
                 otools_commands::otools_host_run_winget_install,
                 otools_commands::otools_host_http_write_base64_file,
                 otools_commands::otools_host_http_send,

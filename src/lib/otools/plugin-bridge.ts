@@ -708,6 +708,12 @@ async function dispatchOtoolsCommand(
     })
   }
 
+  if (command === "otools_host_set_linux_privilege_password") {
+    return getTransport().call(command, {
+      password: readStringField(payload, "password"),
+    })
+  }
+
   if (command === "otools_get_plugins_file_path") {
     return getTransport().call(command)
   }

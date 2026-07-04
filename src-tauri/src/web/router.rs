@@ -643,6 +643,10 @@ pub fn build_router(
             post(handlers::otools::otools_host_run_package_action),
         )
         .route(
+            "/otools_host_set_linux_privilege_password",
+            post(handlers::otools::otools_host_set_linux_privilege_password),
+        )
+        .route(
             "/otools_host_run_winget_install",
             post(handlers::otools::otools_host_run_winget_install),
         )

@@ -16,6 +16,30 @@ use otools_core::HostError;
 #[cfg(target_os = "windows")]
 use csv::ReaderBuilder;
 
+#[cfg(target_os = "linux")]
+use std::sync::{Mutex, OnceLock};
+#[cfg(target_os = "linux")]
+use std::time::{Duration, Instant};
+
+#[cfg(target_os = "linux")]
+const HOST_LINUX_SUDO_PASSWORD_INVALID: &str = "SERVRUN_LINUX_SUDO_PASSWORD_INVALID";
+#[cfg(target_os = "linux")]
+const HOST_LINUX_SUDO_PASSWORD_REQUIRED: &str = "SERVRUN_LINUX_SUDO_PASSWORD_REQUIRED";
+#[cfg(target_os = "linux")]
+const HOST_LINUX_PRIVILEGE_CACHE_TTL_SECS: u64 = 15 * 60;
+
+#[cfg(target_os = "linux")]
+struct LinuxPrivilegeCacheEntry {
+    encrypted_password: Vec<u8>,
+    expires_at: Instant,
+}
+
+#[cfg(target_os = "linux")]
+static HOST_LINUX_PRIVILEGE_CACHE: OnceLock<Mutex<Option<LinuxPrivilegeCacheEntry>>> =
+    OnceLock::new();
+#[cfg(target_os = "linux")]
+static HOST_LINUX_PRIVILEGE_KEY: OnceLock<Vec<u8>> = OnceLock::new();
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebviewFileMeta {
@@ -445,6 +469,24 @@ pub async fn otools_host_run_package_action(
     }))
 }
 
+pub async fn otools_host_set_linux_privilege_password(
+    password: String,
+) -> Result<String, HostError> {
+    #[cfg(target_os = "linux")]
+    {
+        validate_linux_sudo_password(&password)?;
+        cache_linux_privilege_password(password.trim_end_matches(['\r', '\n']))?;
+        let _ = read_linux_privilege_password()?;
+        return Ok("cached".to_string());
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = password;
+        Err(HostError::task_execution_failed("仅 Linux 支持该操作"))
+    }
+}
+
 pub async fn otools_host_run_winget_install(
     package_name: String,
     options: Option<Value>,
@@ -842,6 +884,127 @@ fn default_package_manager() -> String {
     } else {
         "system".to_string()
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_is_root_user() -> bool {
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_privilege_cache_ttl() -> Duration {
+    Duration::from_secs(HOST_LINUX_PRIVILEGE_CACHE_TTL_SECS)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_privilege_key() -> &'static [u8] {
+    HOST_LINUX_PRIVILEGE_KEY.get_or_init(|| {
+        let first = uuid::Uuid::new_v4();
+        let second = uuid::Uuid::new_v4();
+        let mut bytes = Vec::with_capacity(32);
+        bytes.extend_from_slice(first.as_bytes());
+        bytes.extend_from_slice(second.as_bytes());
+        bytes
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn xor_crypt_bytes(input: &[u8]) -> Vec<u8> {
+    let key = linux_privilege_key();
+    input
+        .iter()
+        .enumerate()
+        .map(|(index, byte)| byte ^ key[index % key.len()])
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn cache_linux_privilege_password(password: &str) -> Result<(), HostError> {
+    let cache = HOST_LINUX_PRIVILEGE_CACHE.get_or_init(|| Mutex::new(None));
+    let encrypted_password = xor_crypt_bytes(password.as_bytes());
+    let expires_at = Instant::now() + linux_privilege_cache_ttl();
+    let mut guard = cache.lock().map_err(|_| {
+        HostError::task_execution_failed("Linux sudo 缓存锁定失败")
+    })?;
+    *guard = Some(LinuxPrivilegeCacheEntry {
+        encrypted_password,
+        expires_at,
+    });
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_privilege_password() -> Result<String, HostError> {
+    if linux_is_root_user() {
+        return Ok(String::new());
+    }
+
+    let cache = HOST_LINUX_PRIVILEGE_CACHE.get_or_init(|| Mutex::new(None));
+    let mut guard = cache.lock().map_err(|_| {
+        HostError::task_execution_failed("Linux sudo 缓存锁定失败")
+    })?;
+    let Some(entry) = guard.as_ref() else {
+        return Err(HostError::task_execution_failed(
+            HOST_LINUX_SUDO_PASSWORD_REQUIRED,
+        ));
+    };
+    if Instant::now() > entry.expires_at {
+        *guard = None;
+        return Err(HostError::task_execution_failed(
+            HOST_LINUX_SUDO_PASSWORD_REQUIRED,
+        ));
+    }
+
+    let decrypted = xor_crypt_bytes(&entry.encrypted_password);
+    String::from_utf8(decrypted).map_err(|_| {
+        HostError::task_execution_failed(HOST_LINUX_SUDO_PASSWORD_REQUIRED)
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn clear_linux_privilege_password() {
+    if let Some(cache) = HOST_LINUX_PRIVILEGE_CACHE.get() {
+        if let Ok(mut guard) = cache.lock() {
+            *guard = None;
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_sudo_password(password: &str) -> Result<(), HostError> {
+    if linux_is_root_user() {
+        return Ok(());
+    }
+
+    let normalized = password.trim_end_matches(['\r', '\n']);
+    if normalized.is_empty() {
+        return Err(HostError::task_execution_failed(
+            HOST_LINUX_SUDO_PASSWORD_INVALID,
+        ));
+    }
+
+    let output = Command::new("sudo")
+        .args(["-S", "-p", "", "-v"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(stdin) = child.stdin.as_mut() {
+                stdin.write_all(format!("{normalized}\n").as_bytes())?;
+            }
+            child.wait_with_output()
+        })
+        .map_err(HostError::io)?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    clear_linux_privilege_password();
+    Err(HostError::task_execution_failed(
+        HOST_LINUX_SUDO_PASSWORD_INVALID,
+    ))
 }
 
 fn list_listen_processes() -> Vec<Value> {

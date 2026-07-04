@@ -1010,6 +1010,15 @@ pub async fn otools_host_run_package_action(
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_host_set_linux_privilege_password(
+    password: String,
+) -> Result<String, AppCommandError> {
+    otools_host::otools_host_set_linux_privilege_password(password)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_host_run_winget_install(
     package_name: String,
     options: Option<Value>,

@@ -216,6 +216,12 @@ pub struct PackageActionParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LinuxPrivilegePasswordParams {
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct KillProcessParams {
     pub pid: u32,
 }
@@ -1041,6 +1047,14 @@ pub async fn otools_host_run_package_action(
             params.version,
         )
         .await?,
+    ))
+}
+
+pub async fn otools_host_set_linux_privilege_password(
+    Json(params): Json<LinuxPrivilegePasswordParams>,
+) -> Result<Json<String>, AppCommandError> {
+    Ok(Json(
+        otools::otools_host_set_linux_privilege_password(params.password).await?,
     ))
 }
 
