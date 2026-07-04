@@ -27,10 +27,11 @@ pub use otools_platform_host::{
     otools_host_set_linux_privilege_password, otools_set_status_bar_state,
     otools_shell_beep, otools_shell_open_external, otools_shell_open_path,
     otools_shell_show_item_in_folder, otools_shell_trash_item, otools_show_notification,
-    tools_webview_browse_dialog, tools_webview_create_dir,
+    resolve_upload_static_path, tools_webview_browse_dialog, tools_webview_create_dir,
     tools_webview_home_dir, tools_webview_join_path, tools_webview_list_dir, tools_webview_log,
     tools_webview_read_file, tools_webview_remove_entry, tools_webview_rename_entry,
-    tools_webview_touch_file, tools_webview_write_file, WebviewDirEntry, WebviewReadFilePayload,
+    tools_webview_touch_file, tools_webview_write_file, upload_save_image, SavedImage,
+    WebviewDirEntry, WebviewReadFilePayload,
     WebviewRenameEntryRequest, WebviewWriteFileRequest,
 };
 pub use otools_plugin_config::{

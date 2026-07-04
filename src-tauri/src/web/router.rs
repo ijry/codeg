@@ -599,6 +599,10 @@ pub fn build_router(
             post(handlers::otools::tools_webview_log),
         )
         .route(
+            "/upload_save_image",
+            post(handlers::otools::upload_save_image),
+        )
+        .route(
             "/otools_set_status_bar_state",
             post(handlers::otools::otools_set_status_bar_state),
         )
@@ -1655,6 +1659,7 @@ pub fn build_router(
             "/otools-assets/{plugin_uuid}/{*path}",
             get(handlers::otools::otools_asset),
         )
+        .route("/otools-static/{*path}", get(handlers::otools::otools_static))
         .fallback_service(fallback)
         .layer(html_rewrite)
         .layer(cors)

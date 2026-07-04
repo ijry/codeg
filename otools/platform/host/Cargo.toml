@@ -12,6 +12,7 @@ otools-core = { path = "../../core" }
 otools-platform-clipboard = { path = "../clipboard" }
 otools-platform-package-manager = { path = "../package-manager" }
 otools-platform-shell = { path = "../shell" }
+otools-platform-upload = { path = "../upload" }
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

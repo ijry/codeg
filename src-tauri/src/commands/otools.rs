@@ -11,7 +11,7 @@ pub use otools_host::{
     OtoolsAssetPayload, OtoolsConfig, OtoolsConfigTab, OtoolsCopiedFile, OtoolsHostInfo,
     OtoolsNativeInvokeRequest,
     OtoolsNavigationResult, OtoolsPluginInfo, ParkInstallInput, ParkInstallResult,
-    ParkUninstallInput, ParkUninstallResult, ParkWorkspace, ProjectScriptsResponse,
+    ParkUninstallInput, ParkUninstallResult, ParkWorkspace, ProjectScriptsResponse, SavedImage,
     WebviewDirEntry, WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
 };
 #[cfg(feature = "tauri-runtime")]
@@ -911,6 +911,18 @@ pub async fn tools_webview_log(message: String) -> Result<(), AppCommandError> {
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn upload_save_image(
+    file_name: String,
+    mime: String,
+    data_base64: String,
+    source_module: Option<String>,
+) -> Result<SavedImage, AppCommandError> {
+    otools_host::upload_save_image(file_name, mime, data_base64, source_module)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_set_status_bar_state(payload: Value) -> Result<Value, AppCommandError> {
     otools_host::otools_set_status_bar_state(payload)
         .await
@@ -1115,6 +1127,12 @@ pub fn resolve_plugin_asset_path(
     asset_path: &str,
 ) -> Result<std::path::PathBuf, AppCommandError> {
     otools_host::resolve_plugin_asset_path(plugin_uuid, asset_path).map_err(map_host_error)
+}
+
+pub fn resolve_upload_static_path(
+    relative_path: &str,
+) -> Result<std::path::PathBuf, AppCommandError> {
+    otools_host::resolve_upload_static_path(relative_path).map_err(map_host_error)
 }
 
 fn map_host_error(error: otools_host::HostError) -> AppCommandError {

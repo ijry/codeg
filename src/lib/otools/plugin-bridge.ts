@@ -10,6 +10,7 @@ import {
 } from "@/lib/platform"
 import {
   getActiveRemoteConnectionId,
+  getServerBaseUrl,
   getShellTransport,
   getTransport,
   isDesktop,
@@ -126,6 +127,8 @@ const COPY_IMAGE_COMMANDS = new Set(["otools_copy_image"])
 const GET_COPIED_FILES_COMMANDS = new Set(["otools_get_copied_files"])
 
 const FILE_ICON_COMMANDS = new Set(["otools_get_file_icon"])
+
+const UPLOAD_COMMANDS = new Set(["upload_save_image"])
 
 const FILESYSTEM_COMMANDS = new Set([
   "read_file_content",
@@ -841,6 +844,22 @@ async function dispatchOtoolsCommand(
     } catch {
       return ""
     }
+  }
+
+  if (UPLOAD_COMMANDS.has(command)) {
+    const saved = await getTransport().call("upload_save_image", {
+      fileName:
+        readStringField(payload, "fileName") ||
+        readStringField(payload, "file_name"),
+      mime: readStringField(payload, "mime"),
+      dataBase64:
+        readStringField(payload, "dataBase64") ||
+        readStringField(payload, "data_base64"),
+      sourceModule:
+        readOptionalStringField(payload, "sourceModule") ??
+        readOptionalStringField(payload, "source_module"),
+    })
+    return normalizeUploadSavedImage(saved)
   }
 
   if (NOTIFICATION_COMMANDS.has(command)) {
@@ -2131,6 +2150,31 @@ function hostTabExists(label: string): boolean {
   const normalized = String(label || "").trim()
   if (!normalized) return false
   return readHostWindowState().tabLabels.includes(normalized)
+}
+
+function normalizeUploadSavedImage(saved: unknown): unknown {
+  const record = asRecord(saved)
+  if (!record) return saved
+  const relativePath = String(record.relativePath || "").trim()
+  if (
+    !relativePath ||
+    (isDesktop() && getActiveRemoteConnectionId() === null)
+  ) {
+    return saved
+  }
+  return {
+    ...record,
+    staticUrl: `${getServerBaseUrl()}/otools-static/${encodePathSegments(
+      relativePath
+    )}`,
+  }
+}
+
+function encodePathSegments(path: string): string {
+  return path
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/")
 }
 
 function readStringField(payload: unknown, field: string): string {

@@ -4761,6 +4761,7 @@ dependencies = [
  "otools-platform-clipboard",
  "otools-platform-package-manager",
  "otools-platform-shell",
+ "otools-platform-upload",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -4795,6 +4796,19 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-plugin-global-shortcut",
+]
+
+[[package]]
+name = "otools-platform-upload"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "md-5",
+ "otools-core",
+ "serde",
+ "sha1",
+ "uuid",
 ]
 
 [[package]]

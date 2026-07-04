@@ -1,0 +1,13 @@
+[package]
+name = "otools-platform-upload"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+md-5 = "0.10"
+otools-core = { path = "../../core" }
+serde = { version = "1", features = ["derive"] }
+sha1 = "0.10"
+uuid = { version = "1", features = ["v4"] }

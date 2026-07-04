@@ -96,6 +96,100 @@ mod tauri_app {
         });
     }
 
+    fn otools_static_protocol_response(uri_str: &str) -> tauri::http::Response<Vec<u8>> {
+        use tauri::http::header::CONTENT_TYPE;
+        use tauri::http::{Response, StatusCode};
+
+        let Some(relative_path) = otools_static_protocol_relative_path(uri_str) else {
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header(CONTENT_TYPE, "text/plain")
+                .body(b"missing path".to_vec())
+                .expect("build static missing path response");
+        };
+
+        match otools_host::resolve_upload_static_path(&relative_path) {
+            Ok(path) => match std::fs::read(&path) {
+                Ok(bytes) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(CONTENT_TYPE, otools_static_content_type(&path))
+                    .body(bytes)
+                    .expect("build static file response"),
+                Err(_) => Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .header(CONTENT_TYPE, "text/plain")
+                    .body(b"file not found".to_vec())
+                    .expect("build static file not found response"),
+            },
+            Err(error) => {
+                let status = match error.code {
+                    otools_host::HostErrorCode::InvalidInput
+                    | otools_host::HostErrorCode::PermissionDenied => StatusCode::FORBIDDEN,
+                    _ => StatusCode::NOT_FOUND,
+                };
+                Response::builder()
+                    .status(status)
+                    .header(CONTENT_TYPE, "text/plain")
+                    .body(error.message.into_bytes())
+                    .expect("build static error response")
+            }
+        }
+    }
+
+    fn otools_static_protocol_relative_path(uri_str: &str) -> Option<String> {
+        let parts = match url::Url::parse(uri_str) {
+            Ok(url) => {
+                let mut parts = Vec::new();
+                if let Some(host) = url.host_str().filter(|value| !value.is_empty()) {
+                    parts.push(host.to_string());
+                }
+                if let Some(segments) = url.path_segments() {
+                    parts.extend(
+                        segments
+                            .filter(|item| !item.is_empty())
+                            .map(|item| item.to_string()),
+                    );
+                }
+                parts
+            }
+            Err(_) => {
+                let trimmed = uri_str
+                    .strip_prefix("static:")
+                    .unwrap_or(uri_str)
+                    .strip_prefix("//")
+                    .unwrap_or_else(|| uri_str.strip_prefix("static:").unwrap_or(uri_str))
+                    .trim_start_matches('/');
+                trimmed
+                    .split('/')
+                    .filter(|item| !item.is_empty())
+                    .map(|item| item.to_string())
+                    .collect()
+            }
+        };
+        if parts.is_empty() || parts.iter().any(|item| item == "..") {
+            return None;
+        }
+        Some(parts.join("/"))
+    }
+
+    fn otools_static_content_type(path: &std::path::Path) -> &'static str {
+        match path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("svg") => "image/svg+xml",
+            Some("png") => "image/png",
+            Some("jpg") | Some("jpeg") => "image/jpeg",
+            Some("gif") => "image/gif",
+            Some("webp") => "image/webp",
+            Some("bmp") => "image/bmp",
+            Some("tif") | Some("tiff") => "image/tiff",
+            _ => "application/octet-stream",
+        }
+    }
+
     /// On Windows, opt-out users can disable WebView2 hardware acceleration to
     /// work around AMD/Intel GPU driver bugs that produce a black-screen
     /// webview. The flag is stored in a tiny sidecar file at
@@ -151,7 +245,10 @@ mod tauri_app {
         process::ensure_node_in_path();
         process::ensure_user_npm_prefix_in_path();
 
-        let builder = tauri::Builder::default();
+        let builder =
+            tauri::Builder::default().register_uri_scheme_protocol("static", |_ctx, request| {
+                otools_static_protocol_response(&request.uri().to_string())
+            });
 
         // Must be the first plugin: it short-circuits second launches by
         // signalling the running instance and exiting before any other
@@ -1047,6 +1144,7 @@ mod tauri_app {
                 otools_commands::tools_webview_rename_entry,
                 otools_commands::tools_webview_browse_dialog,
                 otools_commands::tools_webview_log,
+                otools_commands::upload_save_image,
                 otools_commands::otools_set_status_bar_state,
                 otools_commands::otools_copy_text,
                 otools_commands::otools_copy_file,

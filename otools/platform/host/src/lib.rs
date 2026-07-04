@@ -12,6 +12,7 @@ use walkdir::WalkDir;
 
 use otools_core::HostError;
 pub use otools_platform_clipboard::OtoolsCopiedFile;
+pub use otools_platform_upload::SavedImage;
 
 #[cfg(target_os = "windows")]
 use csv::ReaderBuilder;
@@ -196,6 +197,19 @@ pub async fn tools_webview_log(message: String) -> Result<(), HostError> {
         eprintln!("[OTools][WebviewFS] {text}");
     }
     Ok(())
+}
+
+pub async fn upload_save_image(
+    file_name: String,
+    mime: String,
+    data_base64: String,
+    source_module: Option<String>,
+) -> Result<SavedImage, HostError> {
+    otools_platform_upload::upload_save_image(file_name, mime, data_base64, source_module)
+}
+
+pub fn resolve_upload_static_path(relative_path: &str) -> Result<PathBuf, HostError> {
+    otools_platform_upload::resolve_upload_static_path(relative_path)
 }
 
 pub async fn project_runner_read_scripts(

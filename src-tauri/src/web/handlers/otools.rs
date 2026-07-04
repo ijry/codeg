@@ -260,6 +260,18 @@ pub struct WriteBase64FileParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UploadSaveImageParams {
+    #[serde(alias = "file_name")]
+    pub file_name: String,
+    pub mime: String,
+    #[serde(alias = "data_base64")]
+    pub data_base64: String,
+    #[serde(alias = "source_module")]
+    pub source_module: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UuidParams {
     pub uuid: String,
 }
@@ -979,6 +991,20 @@ pub async fn tools_webview_log(
     Ok(Json(()))
 }
 
+pub async fn upload_save_image(
+    Json(params): Json<UploadSaveImageParams>,
+) -> Result<Json<otools::SavedImage>, AppCommandError> {
+    Ok(Json(
+        otools::upload_save_image(
+            params.file_name,
+            params.mime,
+            params.data_base64,
+            params.source_module,
+        )
+        .await?,
+    ))
+}
+
 pub async fn otools_set_status_bar_state(
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, AppCommandError> {
@@ -1171,6 +1197,25 @@ pub async fn otools_asset(
         .body(Body::from(bytes))
         .map_err(|error| {
             AppCommandError::task_execution_failed("Failed to build OTools asset response")
+                .with_detail(error.to_string())
+        })
+}
+
+pub async fn otools_static(raw_params: RawPathParams) -> Result<Response, AppCommandError> {
+    let asset_path = raw_params
+        .iter()
+        .find(|(key, _)| *key == "*path" || *key == "path")
+        .map(|(_, value)| value.to_string())
+        .unwrap_or_default();
+    let path = otools::resolve_upload_static_path(&asset_path)?;
+    let bytes = tokio::fs::read(&path).await.map_err(AppCommandError::io)?;
+    let content_type = guess_content_type(&path);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from(bytes))
+        .map_err(|error| {
+            AppCommandError::task_execution_failed("Failed to build OTools static response")
                 .with_detail(error.to_string())
         })
 }
