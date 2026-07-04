@@ -265,6 +265,26 @@ pub async fn otools_show_notification(
     Ok(())
 }
 
+pub async fn otools_shell_open_path(path: String) -> Result<(), HostError> {
+    otools_platform_shell::otools_shell_open_path(path).map_err(host_operation_error)
+}
+
+pub async fn otools_shell_show_item_in_folder(path: String) -> Result<(), HostError> {
+    otools_platform_shell::otools_shell_show_item_in_folder(path).map_err(host_operation_error)
+}
+
+pub async fn otools_shell_trash_item(path: String) -> Result<(), HostError> {
+    otools_platform_shell::otools_shell_trash_item(path).map_err(host_operation_error)
+}
+
+pub async fn otools_shell_open_external(url: String) -> Result<(), HostError> {
+    otools_platform_shell::otools_shell_open_external(url).map_err(host_operation_error)
+}
+
+pub async fn otools_shell_beep() -> Result<(), HostError> {
+    otools_platform_shell::otools_shell_beep().map_err(host_operation_error)
+}
+
 pub async fn otools_host_scan_storage_catalog(catalog: Vec<Value>) -> Result<Value, HostError> {
     let mut total_bytes = 0_u64;
     let mut existing_items = 0_u64;

@@ -111,6 +111,12 @@ pub struct PathParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UrlParams {
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectEditorOpenParams {
     pub path: String,
     pub editor_id: String,
@@ -1008,6 +1014,39 @@ pub async fn otools_get_file_icon(
     Json(params): Json<PathParams>,
 ) -> Result<Json<String>, AppCommandError> {
     Ok(Json(otools::otools_get_file_icon(params.path).await?))
+}
+
+pub async fn otools_shell_open_path(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_open_path(params.path).await?;
+    Ok(Json(()))
+}
+
+pub async fn otools_shell_show_item_in_folder(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_show_item_in_folder(params.path).await?;
+    Ok(Json(()))
+}
+
+pub async fn otools_shell_trash_item(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_trash_item(params.path).await?;
+    Ok(Json(()))
+}
+
+pub async fn otools_shell_open_external(
+    Json(params): Json<UrlParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_open_external(params.url).await?;
+    Ok(Json(()))
+}
+
+pub async fn otools_shell_beep() -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_beep().await?;
+    Ok(Json(()))
 }
 
 pub async fn otools_show_notification(

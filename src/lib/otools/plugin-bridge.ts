@@ -746,29 +746,60 @@ async function dispatchOtoolsCommand(
   }
 
   if (OPEN_EXTERNAL_COMMANDS.has(command)) {
-    return openUrl(readStringField(payload, "url"))
+    const url = readStringField(payload, "url")
+    try {
+      return await getTransport().call("otools_shell_open_external", { url })
+    } catch {
+      return openUrl(url)
+    }
   }
 
   if (OPEN_PATH_COMMANDS.has(command)) {
-    return openPath(readStringField(payload, "path"))
+    const path = readStringField(payload, "path")
+    try {
+      return await getTransport().call("otools_shell_open_path", { path })
+    } catch {
+      return openPath(path)
+    }
   }
 
   if (command === "open_directory" || command === "openWslUnc") {
-    return openPath(readStringField(payload, "path"))
+    const path = readStringField(payload, "path")
+    try {
+      return await getTransport().call("otools_shell_open_path", { path })
+    } catch {
+      return openPath(path)
+    }
   }
 
   if (REVEAL_ITEM_COMMANDS.has(command)) {
-    return revealItemInDir(readStringField(payload, "path"))
+    const path = readStringField(payload, "path")
+    try {
+      return await getTransport().call("otools_shell_show_item_in_folder", {
+        path,
+      })
+    } catch {
+      return revealItemInDir(path)
+    }
   }
 
   if (TRASH_ITEM_COMMANDS.has(command)) {
     const path = readStringField(payload, "path")
-    if (path) await revealItemInDir(path)
-    return false
+    try {
+      await getTransport().call("otools_shell_trash_item", { path })
+      return true
+    } catch {
+      if (path) await revealItemInDir(path)
+      return false
+    }
   }
 
   if (BEEP_COMMANDS.has(command)) {
-    return
+    try {
+      return await getTransport().call("otools_shell_beep")
+    } catch {
+      return
+    }
   }
 
   if (COPY_TEXT_COMMANDS.has(command)) {

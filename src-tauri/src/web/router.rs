@@ -623,6 +623,26 @@ pub fn build_router(
             post(handlers::otools::otools_get_file_icon),
         )
         .route(
+            "/otools_shell_open_path",
+            post(handlers::otools::otools_shell_open_path),
+        )
+        .route(
+            "/otools_shell_show_item_in_folder",
+            post(handlers::otools::otools_shell_show_item_in_folder),
+        )
+        .route(
+            "/otools_shell_trash_item",
+            post(handlers::otools::otools_shell_trash_item),
+        )
+        .route(
+            "/otools_shell_open_external",
+            post(handlers::otools::otools_shell_open_external),
+        )
+        .route(
+            "/otools_shell_beep",
+            post(handlers::otools::otools_shell_beep),
+        )
+        .route(
             "/otools_show_notification",
             post(handlers::otools::otools_show_notification),
         )

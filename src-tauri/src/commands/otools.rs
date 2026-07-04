@@ -954,6 +954,41 @@ pub async fn otools_get_file_icon(path: String) -> Result<String, AppCommandErro
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_shell_open_path(path: String) -> Result<(), AppCommandError> {
+    otools_host::otools_shell_open_path(path)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_shell_show_item_in_folder(path: String) -> Result<(), AppCommandError> {
+    otools_host::otools_shell_show_item_in_folder(path)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_shell_trash_item(path: String) -> Result<(), AppCommandError> {
+    otools_host::otools_shell_trash_item(path)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_shell_open_external(url: String) -> Result<(), AppCommandError> {
+    otools_host::otools_shell_open_external(url)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_shell_beep() -> Result<(), AppCommandError> {
+    otools_host::otools_shell_beep()
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_show_notification(
     body: String,
     click_feature_code: Option<String>,
