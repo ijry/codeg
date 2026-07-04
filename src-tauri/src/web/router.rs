@@ -607,6 +607,22 @@ pub fn build_router(
             post(handlers::otools::otools_copy_text),
         )
         .route(
+            "/otools_copy_file",
+            post(handlers::otools::otools_copy_file),
+        )
+        .route(
+            "/otools_copy_image",
+            post(handlers::otools::otools_copy_image),
+        )
+        .route(
+            "/otools_get_copied_files",
+            post(handlers::otools::otools_get_copied_files),
+        )
+        .route(
+            "/otools_get_file_icon",
+            post(handlers::otools::otools_get_file_icon),
+        )
+        .route(
             "/otools_show_notification",
             post(handlers::otools::otools_show_notification),
         )

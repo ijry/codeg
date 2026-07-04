@@ -776,20 +776,40 @@ async function dispatchOtoolsCommand(
   }
 
   if (COPY_FILE_COMMANDS.has(command)) {
-    copiedHostFiles = readStringArrayField(payload, "paths")
-    return copiedHostFiles.length > 0
+    const paths = readStringArrayField(payload, "paths")
+    try {
+      return await getTransport().call("otools_copy_file", { paths })
+    } catch {
+      copiedHostFiles = paths
+      return copiedHostFiles.length > 0
+    }
   }
 
   if (COPY_IMAGE_COMMANDS.has(command)) {
-    return copyImagePayload(payload)
+    const image = readImagePayloadString(payload)
+    try {
+      return await getTransport().call("otools_copy_image", { image })
+    } catch {
+      return copyImagePayload(payload)
+    }
   }
 
   if (GET_COPIED_FILES_COMMANDS.has(command)) {
-    return copiedHostFiles
+    try {
+      return await getTransport().call("otools_get_copied_files")
+    } catch {
+      return copiedHostFiles
+    }
   }
 
   if (FILE_ICON_COMMANDS.has(command)) {
-    return ""
+    try {
+      return await getTransport().call("otools_get_file_icon", {
+        path: readStringField(payload, "path"),
+      })
+    } catch {
+      return ""
+    }
   }
 
   if (NOTIFICATION_COMMANDS.has(command)) {
@@ -2256,12 +2276,30 @@ async function saveDialog(options: {
   return result?.trim() ? result : null
 }
 
-async function copyText(text: string): Promise<void> {
-  if (!text.trim()) return
+async function copyText(text: string): Promise<boolean> {
+  if (!text.trim()) return false
+  try {
+    return Boolean(await getTransport().call("otools_copy_text", { text }))
+  } catch {}
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text)
-    return
+    return true
   }
+  return false
+}
+
+function readImagePayloadString(payload: unknown): string {
+  const record = asRecord(payload)
+  const image = record?.image ?? payload
+  const imageRecord = asRecord(image)
+  if (typeof image === "string") return image.trim()
+  if (typeof imageRecord?.dataUrl === "string") return imageRecord.dataUrl
+  if (typeof imageRecord?.dataBase64 === "string") {
+    const mime =
+      typeof imageRecord.mime === "string" ? imageRecord.mime : "image/png"
+    return `data:${mime};base64,${imageRecord.dataBase64}`
+  }
+  return ""
 }
 
 async function copyImagePayload(payload: unknown): Promise<boolean> {

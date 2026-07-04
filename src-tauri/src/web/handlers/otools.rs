@@ -172,6 +172,18 @@ pub struct MessageParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CopyFileParams {
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyImageParams {
+    pub image: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StorageScanParams {
     pub catalog: Vec<Value>,
 }
@@ -973,6 +985,29 @@ pub async fn otools_copy_text(
     Ok(Json(
         otools::otools_copy_text(params.text.unwrap_or_default()).await?,
     ))
+}
+
+pub async fn otools_copy_file(
+    Json(params): Json<CopyFileParams>,
+) -> Result<Json<bool>, AppCommandError> {
+    Ok(Json(otools::otools_copy_file(params.paths).await?))
+}
+
+pub async fn otools_copy_image(
+    Json(params): Json<CopyImageParams>,
+) -> Result<Json<bool>, AppCommandError> {
+    Ok(Json(otools::otools_copy_image(params.image).await?))
+}
+
+pub async fn otools_get_copied_files(
+) -> Result<Json<Vec<otools::OtoolsCopiedFile>>, AppCommandError> {
+    Ok(Json(otools::otools_get_copied_files().await?))
+}
+
+pub async fn otools_get_file_icon(
+    Json(params): Json<PathParams>,
+) -> Result<Json<String>, AppCommandError> {
+    Ok(Json(otools::otools_get_file_icon(params.path).await?))
 }
 
 pub async fn otools_show_notification(

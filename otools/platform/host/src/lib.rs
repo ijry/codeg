@@ -1,6 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::UNIX_EPOCH;
@@ -12,6 +11,7 @@ use serde_json::{json, Value};
 use walkdir::WalkDir;
 
 use otools_core::HostError;
+pub use otools_platform_clipboard::OtoolsCopiedFile;
 
 #[cfg(target_os = "windows")]
 use csv::ReaderBuilder;
@@ -237,24 +237,23 @@ pub async fn otools_set_status_bar_state(payload: Value) -> Result<Value, HostEr
 }
 
 pub async fn otools_copy_text(text: String) -> Result<bool, HostError> {
-    #[cfg(target_os = "windows")]
-    {
-        let mut child = Command::new("clip")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .map_err(HostError::io)?;
-        if let Some(stdin) = child.stdin.as_mut() {
-            stdin.write_all(text.as_bytes()).map_err(HostError::io)?;
-        }
-        let status = child.wait().map_err(HostError::io)?;
-        return Ok(status.success());
-    }
+    otools_platform_clipboard::otools_copy_text(text).map_err(host_operation_error)
+}
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = text;
-        Ok(false)
-    }
+pub async fn otools_copy_file(paths: Vec<String>) -> Result<bool, HostError> {
+    otools_platform_clipboard::otools_copy_file(paths).map_err(host_operation_error)
+}
+
+pub async fn otools_copy_image(image: String) -> Result<bool, HostError> {
+    otools_platform_clipboard::otools_copy_image(image).map_err(host_operation_error)
+}
+
+pub async fn otools_get_copied_files() -> Result<Vec<OtoolsCopiedFile>, HostError> {
+    otools_platform_clipboard::otools_get_copied_files().map_err(host_operation_error)
+}
+
+pub async fn otools_get_file_icon(path: String) -> Result<String, HostError> {
+    otools_platform_clipboard::otools_get_file_icon(path).map_err(host_operation_error)
 }
 
 pub async fn otools_show_notification(
@@ -855,8 +854,12 @@ fn value_string_array(value: Option<&Value>) -> Option<Vec<String>> {
     })
 }
 
-fn package_manager_error(message: String) -> HostError {
+fn host_operation_error(message: String) -> HostError {
     HostError::task_execution_failed(message)
+}
+
+fn package_manager_error(message: String) -> HostError {
+    host_operation_error(message)
 }
 
 fn list_listen_processes() -> Vec<Value> {

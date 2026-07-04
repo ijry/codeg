@@ -7,8 +7,9 @@ use crate::app_error::{AppCommandError, AppErrorCode};
 pub use otools_host::{
     DevBindDirectoryInput, DevNativeBuildJobSnapshot, DevNativeBuildJobStart, DevNativeConfig,
     DevPluginActionResult, DevPluginInput, DevPluginUpdateInput, DevPublishVersionInput,
-    DevWorkspace, OtoolsAiChatMessageRecord, OtoolsAiGenerateTextRequest, OtoolsAssetPayload,
-    FsItem, OtoolsConfig, OtoolsConfigTab, OtoolsHostInfo, OtoolsNativeInvokeRequest,
+    DevWorkspace, FsItem, OtoolsAiChatMessageRecord, OtoolsAiGenerateTextRequest,
+    OtoolsAssetPayload, OtoolsConfig, OtoolsConfigTab, OtoolsCopiedFile, OtoolsHostInfo,
+    OtoolsNativeInvokeRequest,
     OtoolsNavigationResult, OtoolsPluginInfo, ParkInstallInput, ParkInstallResult,
     ParkUninstallInput, ParkUninstallResult, ParkWorkspace, ProjectScriptsResponse,
     WebviewDirEntry, WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
@@ -919,6 +920,35 @@ pub async fn otools_set_status_bar_state(payload: Value) -> Result<Value, AppCom
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_copy_text(text: String) -> Result<bool, AppCommandError> {
     otools_host::otools_copy_text(text)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_copy_file(paths: Vec<String>) -> Result<bool, AppCommandError> {
+    otools_host::otools_copy_file(paths)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_copy_image(image: String) -> Result<bool, AppCommandError> {
+    otools_host::otools_copy_image(image)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_get_copied_files(
+) -> Result<Vec<otools_host::OtoolsCopiedFile>, AppCommandError> {
+    otools_host::otools_get_copied_files()
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_get_file_icon(path: String) -> Result<String, AppCommandError> {
+    otools_host::otools_get_file_icon(path)
         .await
         .map_err(map_host_error)
 }
