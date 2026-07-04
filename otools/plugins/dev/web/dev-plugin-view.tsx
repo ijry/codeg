@@ -48,9 +48,13 @@ import {
   getDevWorkspace,
   initializeDevNativeProject,
   initializeDevVueProject,
+  invokeOtoolsNative,
   openProjectInEditor,
   openProjectInTerminal,
   packDevPlugin,
+  probeDevNativePlugin,
+  publishDevVersion,
+  reloadDevNativePlugin,
   reloadOtoolsPlugins,
   setDevNativeEnabled,
   startDevNativePluginBuild,
@@ -60,7 +64,9 @@ import type {
   DevNativeBuildJobSnapshot,
   DevPluginInput,
   DevPluginRecord,
+  DevPublishVersionInput,
   DevWorkspace,
+  OtoolsNativeProbeResult,
   OtoolsHostInfo,
   OtoolsPluginInfo,
 } from "@/lib/otools/types"
@@ -108,8 +114,23 @@ export function DevPluginView({
   const [nativeEnabled, setNativeEnabled] = useState(false)
   const [nativeManifestPath, setNativeManifestPath] = useState("")
   const [nativeEnabledLoading, setNativeEnabledLoading] = useState(false)
+  const [nativeProbeResult, setNativeProbeResult] =
+    useState<OtoolsNativeProbeResult | null>(null)
+  const [nativeInvokeMethod, setNativeInvokeMethod] = useState("ping")
+  const [nativeInvokePayload, setNativeInvokePayload] = useState(
+    '{"message":"hello"}'
+  )
+  const [nativeInvokeOutput, setNativeInvokeOutput] = useState("")
   const [nativeBuildSnapshot, setNativeBuildSnapshot] =
     useState<DevNativeBuildJobSnapshot | null>(null)
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
+  const [publishForm, setPublishForm] = useState<
+    Omit<DevPublishVersionInput, "uuid">
+  >({
+    version: "",
+    changelog: "",
+    downloadUrl: "",
+  })
 
   const devPlugins = useMemo(() => workspace?.items ?? [], [workspace?.items])
   const nativePlugins = plugins.filter((plugin) => plugin.nativeEnabled)
@@ -185,13 +206,26 @@ export function DevPluginView({
       setDetailScreenshotText("")
       setNativeEnabled(false)
       setNativeManifestPath("")
+      setNativeProbeResult(null)
+      setNativeInvokeMethod("ping")
+      setNativeInvokePayload('{"message":"hello"}')
+      setNativeInvokeOutput("")
       setNativeBuildSnapshot(null)
       return
     }
 
     setDetailForm(buildPluginInput(selectedPlugin))
     setDetailScreenshotText(selectedPlugin.screenshots.join("\n"))
+    setNativeProbeResult(null)
+    setNativeInvokeMethod("ping")
+    setNativeInvokePayload('{"message":"hello"}')
+    setNativeInvokeOutput("")
     setNativeBuildSnapshot(null)
+    setPublishForm({
+      version: selectedPlugin.version || "",
+      changelog: "",
+      downloadUrl: "",
+    })
     void loadNativeConfig(selectedPlugin.uuid)
   }, [loadNativeConfig, selectedPlugin])
 
@@ -455,6 +489,9 @@ export function DevPluginView({
           text: snapshot.error || "原生插件构建失败。",
         })
       }
+      if (snapshot.success) {
+        await reloadDevNativePlugin(selectedPlugin.uuid).catch(() => undefined)
+      }
       await loadNativeConfig(selectedPlugin.uuid)
     } catch (error) {
       setNotice({
@@ -485,6 +522,106 @@ export function DevPluginView({
     [loadNativeConfig, selectedPlugin]
   )
 
+  const handleProbeNative = useCallback(async () => {
+    if (!selectedPlugin) return
+    try {
+      const result = await runAction("probe-native", () =>
+        probeDevNativePlugin(selectedPlugin.uuid)
+      )
+      setNativeProbeResult(result)
+      if (typeof result.enabled === "boolean") {
+        setNativeEnabled(result.enabled)
+      }
+      setNotice({ tone: "success", text: "已获取 Native 探测信息。" })
+    } catch (error) {
+      setNativeProbeResult(null)
+      setNotice({
+        tone: "error",
+        text: formatErrorMessage(error, "获取 Native 探测信息失败"),
+      })
+    }
+  }, [runAction, selectedPlugin])
+
+  const handleReloadNative = useCallback(async () => {
+    if (!selectedPlugin) return
+    try {
+      const message = await runAction("reload-native", () =>
+        reloadDevNativePlugin(selectedPlugin.uuid)
+      )
+      setNotice({ tone: "success", text: message })
+      await loadNativeConfig(selectedPlugin.uuid)
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: formatErrorMessage(error, "重载 Native 插件失败"),
+      })
+    }
+  }, [loadNativeConfig, runAction, selectedPlugin])
+
+  const handleInvokeNative = useCallback(async () => {
+    if (!selectedPlugin) return
+    try {
+      const method = nativeInvokeMethod.trim() || "ping"
+      const payload = parseJsonText(nativeInvokePayload)
+      const result = await runAction("invoke-native", () =>
+        invokeOtoolsNative(selectedPlugin.uuid, method, payload)
+      )
+      setNativeInvokeOutput(stringifyValue(result))
+      setNotice({ tone: "success", text: "Native 调用已完成。" })
+    } catch (error) {
+      const message = formatErrorMessage(error, "Native 调用失败")
+      setNativeInvokeOutput(message)
+      setNotice({
+        tone: "error",
+        text: message,
+      })
+    }
+  }, [nativeInvokeMethod, nativeInvokePayload, runAction, selectedPlugin])
+
+  const handleOpenPublishDialog = useCallback(() => {
+    if (!selectedPlugin) return
+    setPublishForm({
+      version: selectedPlugin.version || "",
+      changelog: "",
+      downloadUrl: "",
+    })
+    setPublishDialogOpen(true)
+  }, [selectedPlugin])
+
+  const handlePublishVersion = useCallback(async () => {
+    if (!selectedPlugin) return
+
+    const version = publishForm.version.trim()
+    const changelog = publishForm.changelog.trim()
+    const downloadUrl = publishForm.downloadUrl.trim()
+    if (!version || !changelog || !downloadUrl) {
+      setNotice({
+        tone: "error",
+        text: "发布版本需要填写版本号、更新说明和下载地址。",
+      })
+      return
+    }
+
+    try {
+      const result = await runAction("publish-version", () =>
+        publishDevVersion({
+          uuid: selectedPlugin.uuid,
+          version,
+          changelog,
+          downloadUrl,
+        })
+      )
+      setPublishDialogOpen(false)
+      setNotice({ tone: "success", text: result.message })
+      await refreshWorkspace(result.item.uuid, true)
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: formatErrorMessage(error, "发布版本失败"),
+      })
+    }
+  }, [publishForm, refreshWorkspace, runAction, selectedPlugin])
+
   return (
     <div className="min-h-0 flex-1 overflow-auto p-6">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -492,7 +629,7 @@ export function DevPluginView({
           <h1 className="text-2xl font-semibold tracking-tight">开发者工具</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             保留 MenuGit 的 Dev 工作区结构，并在 codeg-plus 中直接复用已迁移的
-            `dev_*` 宿主命令进行创建、绑定、调试与打包。
+            `dev_*` 宿主命令进行创建、绑定、调试、Native 调用与版本发布。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -885,7 +1022,7 @@ export function DevPluginView({
 
                 <SectionCard
                   title="Native"
-                  description="切换插件原生能力并发起异步构建。"
+                  description="切换原生能力、探测桥接状态、执行原始调用并发起构建。"
                   icon={<Hammer className="h-4 w-4" />}
                 >
                   <div className="flex items-center justify-between rounded-lg border bg-muted/25 p-3">
@@ -907,6 +1044,24 @@ export function DevPluginView({
 
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={actionKey === "probe-native"}
+                      onClick={() => void handleProbeNative()}
+                    >
+                      <ShieldCheck className="h-4 w-4" />
+                      探测 Native
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={actionKey === "reload-native"}
+                      onClick={() => void handleReloadNative()}
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      重载 Native
+                    </Button>
+                    <Button
                       size="sm"
                       disabled={actionKey === "build-native"}
                       onClick={() => void handleBuildNative()}
@@ -925,6 +1080,52 @@ export function DevPluginView({
                     </Button>
                   </div>
 
+                  <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                    <div className="rounded-lg border bg-background p-3">
+                      <div className="text-xs font-medium text-foreground">
+                        Probe result
+                      </div>
+                      <pre className="mt-3 min-h-32 overflow-auto rounded-md bg-muted/40 px-3 py-3 text-xs text-muted-foreground">
+                        {describeNativeProbeResult(nativeProbeResult)}
+                      </pre>
+                    </div>
+
+                    <div className="rounded-lg border bg-background p-3">
+                      <Field label="Method">
+                        <Input
+                          value={nativeInvokeMethod}
+                          onChange={(event) =>
+                            setNativeInvokeMethod(event.target.value)
+                          }
+                          placeholder="ping"
+                        />
+                      </Field>
+                      <Field label="Payload" className="mt-3">
+                        <Textarea
+                          rows={4}
+                          value={nativeInvokePayload}
+                          onChange={(event) =>
+                            setNativeInvokePayload(event.target.value)
+                          }
+                          placeholder='{"message":"hello"}'
+                        />
+                      </Field>
+                      <div className="mt-3">
+                        <Button
+                          size="sm"
+                          disabled={actionKey === "invoke-native"}
+                          onClick={() => void handleInvokeNative()}
+                        >
+                          <Rocket className="h-4 w-4" />
+                          调用 Native
+                        </Button>
+                      </div>
+                      <pre className="mt-3 min-h-32 overflow-auto rounded-md bg-muted/40 px-3 py-3 text-xs text-muted-foreground">
+                        {describeNativeInvokeOutput(nativeInvokeOutput)}
+                      </pre>
+                    </div>
+                  </div>
+
                   <pre className="mt-4 min-h-36 overflow-auto rounded-lg border bg-background px-3 py-3 text-xs text-muted-foreground">
                     {describeBuildSnapshot(nativeBuildSnapshot)}
                   </pre>
@@ -937,11 +1138,24 @@ export function DevPluginView({
                 icon={<Package className="h-4 w-4" />}
                 className="mt-6"
               >
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div className="text-sm text-muted-foreground">
+                    可在本地记录发布版本、下载地址和更新说明。
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => void handleOpenPublishDialog()}
+                    disabled={actionKey === "publish-version"}
+                  >
+                    <Package className="h-4 w-4" />
+                    发布版本
+                  </Button>
+                </div>
                 <div className="divide-y rounded-lg border">
                   {selectedPlugin.versionRecords.map((version) => (
                     <div
                       key={version.id}
-                      className="grid gap-2 px-3 py-3 text-sm md:grid-cols-[120px_1fr_180px]"
+                      className="grid gap-2 px-3 py-3 text-sm md:grid-cols-[120px_1fr_220px]"
                     >
                       <div className="font-medium">{version.version}</div>
                       <div className="text-muted-foreground">
@@ -950,6 +1164,9 @@ export function DevPluginView({
                       <div className="text-xs text-muted-foreground">
                         {version.status || "local"} ·{" "}
                         {version.publishedAt || "-"}
+                        <div className="mt-1 break-all font-mono">
+                          {version.downloadUrl || "-"}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1097,6 +1314,73 @@ export function DevPluginView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>发布新版本</DialogTitle>
+            <DialogDescription>
+              沿用原 Dev 工作区格式，写入本地版本记录。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4">
+            <Field label="版本号">
+              <Input
+                value={publishForm.version}
+                onChange={(event) =>
+                  setPublishForm((current) => ({
+                    ...current,
+                    version: event.target.value,
+                  }))
+                }
+                placeholder="0.1.0"
+              />
+            </Field>
+            <Field label="更新说明">
+              <Textarea
+                rows={5}
+                value={publishForm.changelog}
+                onChange={(event) =>
+                  setPublishForm((current) => ({
+                    ...current,
+                    changelog: event.target.value,
+                  }))
+                }
+                placeholder="描述本次版本变化"
+              />
+            </Field>
+            <Field label="下载地址">
+              <Input
+                value={publishForm.downloadUrl}
+                onChange={(event) =>
+                  setPublishForm((current) => ({
+                    ...current,
+                    downloadUrl: event.target.value,
+                  }))
+                }
+                placeholder="https://example.com/your-plugin.zip"
+              />
+            </Field>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPublishDialogOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              disabled={actionKey === "publish-version"}
+              onClick={() => void handlePublishVersion()}
+            >
+              <Package className="h-4 w-4" />
+              确认发布
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -1170,9 +1454,38 @@ function describeBuildSnapshot(
   return lines.join("\n")
 }
 
+function describeNativeProbeResult(
+  value: OtoolsNativeProbeResult | null
+): string {
+  if (!value) {
+    return "尚未执行 Native 探测。"
+  }
+  return stringifyValue(value)
+}
+
+function describeNativeInvokeOutput(value: string): string {
+  return value.trim() || "尚未调用原生方法。"
+}
+
 function formatErrorMessage(error: unknown, fallback: string): string {
   const text = error instanceof Error ? error.message : String(error)
   return text?.trim() ? text : fallback
+}
+
+function parseJsonText(value: string): unknown {
+  const text = value.trim()
+  if (!text) {
+    return null
+  }
+  return JSON.parse(text)
+}
+
+function stringifyValue(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value ?? "")
+  }
 }
 
 function delay(durationMs: number): Promise<void> {

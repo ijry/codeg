@@ -12,11 +12,13 @@ import type {
   DevNativeConfig,
   DevPluginActionResult,
   DevPluginInput,
+  DevPublishVersionInput,
   DevWorkspace,
   OtoolsAssetPayload,
   OtoolsConfig,
   OtoolsHostInfo,
   OtoolsNavigationResult,
+  OtoolsNativeProbeResult,
   OtoolsPluginInfo,
   ParkCatalogItem,
   ParkInstallResult,
@@ -107,11 +109,11 @@ export async function saveOtoolsConfigValue(
   return getTransport().call("save_otools_config_value", { key, value })
 }
 
-export async function invokeOtoolsNative(
+export async function invokeOtoolsNative<T = unknown>(
   pluginUuid: string,
   method: string,
   payload?: unknown
-): Promise<unknown> {
+): Promise<T> {
   return getTransport().call("otools_native_invoke", {
     pluginUuid,
     method,
@@ -218,12 +220,19 @@ export async function packDevPlugin(
   return getTransport().call("dev_pack_plugin", { uuid })
 }
 
-export async function publishDevVersion(input: {
+export async function probeDevNativePlugin(
   uuid: string
-  version: string
-  changelog: string
-  downloadUrl: string
-}): Promise<DevPluginActionResult> {
+): Promise<OtoolsNativeProbeResult> {
+  return getTransport().call("native_plugin_probe", { uuid })
+}
+
+export async function reloadDevNativePlugin(uuid: string): Promise<string> {
+  return getTransport().call("native_plugin_reload", { uuid })
+}
+
+export async function publishDevVersion(
+  input: DevPublishVersionInput
+): Promise<DevPluginActionResult> {
   return getTransport().call("dev_publish_version", { input })
 }
 

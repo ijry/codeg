@@ -325,6 +325,18 @@ pub fn build_router(
             post(handlers::otools::otools_native_invoke),
         )
         .route(
+            "/native_plugin_invoke",
+            post(handlers::otools::native_plugin_invoke),
+        )
+        .route(
+            "/native_plugin_probe",
+            post(handlers::otools::native_plugin_probe),
+        )
+        .route(
+            "/native_plugin_reload",
+            post(handlers::otools::native_plugin_reload),
+        )
+        .route(
             "/otools_poll_events",
             post(handlers::otools::otools_poll_events),
         )

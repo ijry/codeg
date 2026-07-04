@@ -248,9 +248,12 @@ pub fn invoke_blocking(method: &str, payload: Value) -> Result<Value, String> {
         .lock()
         .map_err(|_| "otools runtime lock poisoned".to_string())?;
 
-    blocking_runtime().block_on(async {
-        let runtime = shared_runtime().await?;
-        runtime.invoke(method, payload).await
+    let method = method.to_string();
+    catch_runtime_unwind("invoke", move || {
+        blocking_runtime().block_on(async {
+            let runtime = shared_runtime().await?;
+            runtime.invoke(&method, payload).await
+        })
     })
 }
 
@@ -259,9 +262,11 @@ pub fn poll_events_blocking() -> Result<Vec<Value>, String> {
         .lock()
         .map_err(|_| "otools runtime lock poisoned".to_string())?;
 
-    blocking_runtime().block_on(async {
-        let runtime = shared_runtime().await?;
-        runtime.poll_events().await
+    catch_runtime_unwind("poll_events", || {
+        blocking_runtime().block_on(async {
+            let runtime = shared_runtime().await?;
+            runtime.poll_events().await
+        })
     })
 }
 
@@ -305,6 +310,22 @@ fn default_data_dir() -> PathBuf {
     dirs::data_dir()
         .map(|dir| dir.join("codeg"))
         .unwrap_or_else(|| PathBuf::from(".codeg-data"))
+}
+
+fn catch_runtime_unwind<T>(
+    operation: &str,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(action)).map_err(|panic| {
+        let detail = match panic.downcast::<String>() {
+            Ok(message) => *message,
+            Err(panic) => match panic.downcast::<&'static str>() {
+                Ok(message) => (*message).to_string(),
+                Err(_) => "unknown panic payload".to_string(),
+            },
+        };
+        format!("otools runtime {operation} panicked: {detail}")
+    })?
 }
 
 async fn decode_json_response(response: axum::response::Response) -> Result<Value, String> {
@@ -356,6 +377,27 @@ fn build_test_root_dir() -> PathBuf {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn runtime_call_catches_string_panics() {
+        let error = catch_runtime_unwind("invoke", || -> Result<(), String> {
+            panic!("boom");
+        })
+        .expect_err("panic should become error");
+
+        assert!(error.contains("otools runtime invoke panicked"));
+        assert!(error.contains("boom"));
+    }
+
+    #[test]
+    fn runtime_call_preserves_regular_errors() {
+        let error = catch_runtime_unwind("poll_events", || -> Result<(), String> {
+            Err("bridge failed".to_string())
+        })
+        .expect_err("regular error should pass through");
+
+        assert_eq!(error, "bridge failed");
+    }
 
     #[tokio::test]
     async fn open_settings_window_returns_web_path_without_http_server() {

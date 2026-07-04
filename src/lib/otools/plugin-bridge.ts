@@ -20,6 +20,8 @@ import {
   getOtoolsPluginAsset,
   getOtoolsPluginState,
   invokeOtoolsNative,
+  probeDevNativePlugin,
+  reloadDevNativePlugin,
   saveOtoolsConfig,
   saveOtoolsConfigValue,
   setOtoolsPluginState,
@@ -864,19 +866,15 @@ async function dispatchOtoolsCommand(
   }
 
   if (command === "native_plugin_reload") {
-    return {
-      ok: true,
-      pluginUuid: targetPluginUuid,
-    }
+    return reloadDevNativePlugin(
+      resolvePayloadPluginUuid(targetPluginUuid, payload)
+    )
   }
 
   if (command === "native_plugin_probe") {
-    return {
-      ok: true,
-      pluginUuid: targetPluginUuid,
-      runtime: "codeg-plus",
-      windowLabel: WINDOW_LABEL,
-    }
+    return probeDevNativePlugin(
+      resolvePayloadPluginUuid(targetPluginUuid, payload)
+    )
   }
 
   if (

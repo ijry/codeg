@@ -247,6 +247,48 @@ pub async fn otools_native_invoke(
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn native_plugin_invoke(
+    uuid: String,
+    method: String,
+    payload: Value,
+) -> Result<Value, AppCommandError> {
+    otools_native_invoke(OtoolsNativeInvokeRequest {
+        plugin_uuid: uuid,
+        method,
+        payload,
+    })
+    .await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn native_plugin_probe(uuid: String) -> Result<Value, AppCommandError> {
+    let mut value = serde_json::json!({
+        "ok": true,
+        "pluginUuid": uuid.clone(),
+        "runtime": "codeg-plus",
+        "windowLabel": "otools",
+    });
+
+    if let Ok(config) = otools_host::dev_get_native_config(uuid).await {
+        if let Some(object) = value.as_object_mut() {
+            object.insert("enabled".to_string(), Value::Bool(config.enabled));
+            object.insert(
+                "manifestPath".to_string(),
+                Value::String(config.manifest_path),
+            );
+        }
+    }
+
+    Ok(value)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn native_plugin_reload(uuid: String) -> Result<String, AppCommandError> {
+    otools_reload_all_plugins().await?;
+    Ok(format!("已刷新 Native 插件实例：{uuid}"))
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_poll_events() -> Result<Vec<Value>, AppCommandError> {
     crate::otools_bridge::poll_events_blocking().map_err(|error| {
         AppCommandError::task_execution_failed("OTools event polling failed").with_detail(error)

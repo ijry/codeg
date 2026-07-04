@@ -214,6 +214,16 @@ pub struct OfflineInstallParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct NativePluginInvokeParams {
+    #[serde(alias = "plugin_uuid", alias = "pluginUuid")]
+    pub uuid: String,
+    pub method: String,
+    #[serde(default)]
+    pub payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DirectoryPathParams {
     #[serde(alias = "directory_path", alias = "path")]
     pub directory_path: String,
@@ -360,6 +370,26 @@ pub async fn otools_native_invoke(
     Json(params): Json<OtoolsNativeInvokeRequest>,
 ) -> Result<Json<Value>, AppCommandError> {
     Ok(Json(otools::otools_native_invoke(params).await?))
+}
+
+pub async fn native_plugin_invoke(
+    Json(params): Json<NativePluginInvokeParams>,
+) -> Result<Json<Value>, AppCommandError> {
+    Ok(Json(
+        otools::native_plugin_invoke(params.uuid, params.method, params.payload).await?,
+    ))
+}
+
+pub async fn native_plugin_probe(
+    Json(params): Json<UuidParams>,
+) -> Result<Json<Value>, AppCommandError> {
+    Ok(Json(otools::native_plugin_probe(params.uuid).await?))
+}
+
+pub async fn native_plugin_reload(
+    Json(params): Json<UuidParams>,
+) -> Result<Json<String>, AppCommandError> {
+    Ok(Json(otools::native_plugin_reload(params.uuid).await?))
 }
 
 pub async fn otools_poll_events() -> Result<Json<Vec<Value>>, AppCommandError> {

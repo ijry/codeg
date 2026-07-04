@@ -145,6 +145,13 @@ export interface DevPluginActionResult {
   item: DevPluginRecord
 }
 
+export interface DevPublishVersionInput {
+  uuid: string
+  version: string
+  changelog: string
+  downloadUrl: string
+}
+
 export interface DevNativeBuildJobStart {
   jobId: string
 }
@@ -162,6 +169,15 @@ export interface DevNativeConfig {
   enabled: boolean
   manifestPath: string
 }
+
+export type OtoolsNativeProbeResult = {
+  ok?: boolean
+  pluginUuid?: string
+  runtime?: string
+  windowLabel?: string
+  enabled?: boolean
+  manifestPath?: string
+} & Record<string, unknown>
 
 export interface ParkReviewItem {
   user: string
