@@ -8,7 +8,7 @@ pub use otools_host::{
     DevBindDirectoryInput, DevNativeBuildJobSnapshot, DevNativeBuildJobStart, DevNativeConfig,
     DevPluginActionResult, DevPluginInput, DevPluginUpdateInput, DevPublishVersionInput,
     DevWorkspace, OtoolsAiChatMessageRecord, OtoolsAiGenerateTextRequest, OtoolsAssetPayload,
-    OtoolsConfig, OtoolsConfigTab, OtoolsHostInfo, OtoolsNativeInvokeRequest,
+    FsItem, OtoolsConfig, OtoolsConfigTab, OtoolsHostInfo, OtoolsNativeInvokeRequest,
     OtoolsNavigationResult, OtoolsPluginInfo, ParkInstallInput, ParkInstallResult,
     ParkUninstallInput, ParkUninstallResult, ParkWorkspace, ProjectScriptsResponse,
     WebviewDirEntry, WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
@@ -467,6 +467,49 @@ pub async fn otools_get_plugin_asset(
     asset_path: String,
 ) -> Result<OtoolsAssetPayload, AppCommandError> {
     otools_host::otools_get_plugin_asset(plugin_uuid, asset_path)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn read_file_content(file_path: String) -> Result<String, AppCommandError> {
+    otools_host::read_file_content(file_path)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn write_file_content(
+    file_path: String,
+    content: String,
+) -> Result<(), AppCommandError> {
+    otools_host::write_file_content(file_path, content)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn read_directory_recursive(path: String) -> Result<Vec<FsItem>, AppCommandError> {
+    otools_host::read_directory_recursive(path)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn create_directory(path: String) -> Result<(), AppCommandError> {
+    otools_host::create_directory(path)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn delete_file(path: String) -> Result<(), AppCommandError> {
+    otools_host::delete_file(path).await.map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn delete_directory(path: String) -> Result<(), AppCommandError> {
+    otools_host::delete_directory(path)
         .await
         .map_err(map_host_error)
 }

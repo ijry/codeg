@@ -127,6 +127,15 @@ const GET_COPIED_FILES_COMMANDS = new Set(["otools_get_copied_files"])
 
 const FILE_ICON_COMMANDS = new Set(["otools_get_file_icon"])
 
+const FILESYSTEM_COMMANDS = new Set([
+  "read_file_content",
+  "write_file_content",
+  "read_directory_recursive",
+  "create_directory",
+  "delete_file",
+  "delete_directory",
+])
+
 const NOTIFICATION_COMMANDS = new Set([
   "__otools_show_notification",
   "otools_show_notification",
@@ -669,6 +678,10 @@ async function dispatchOtoolsCommand(
   }
 
   if (HOST_FORWARD_PREFIXES.some((prefix) => command.startsWith(prefix))) {
+    return getTransport().call(command, asRecord(payload) ?? {})
+  }
+
+  if (FILESYSTEM_COMMANDS.has(command)) {
     return getTransport().call(command, asRecord(payload) ?? {})
   }
 

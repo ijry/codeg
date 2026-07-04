@@ -131,6 +131,19 @@ pub struct AssetParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FileContentReadParams {
+    pub file_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContentWriteParams {
+    pub file_path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoveEntryParams {
     pub path: String,
     pub recursive: Option<bool>,
@@ -588,6 +601,42 @@ pub async fn otools_get_plugin_asset(
     Ok(Json(
         otools::otools_get_plugin_asset(params.plugin_uuid, params.asset_path).await?,
     ))
+}
+
+pub async fn read_file_content(
+    Json(params): Json<FileContentReadParams>,
+) -> Result<Json<String>, AppCommandError> {
+    Ok(Json(otools::read_file_content(params.file_path).await?))
+}
+
+pub async fn write_file_content(
+    Json(params): Json<FileContentWriteParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::write_file_content(params.file_path, params.content).await?;
+    Ok(Json(()))
+}
+
+pub async fn read_directory_recursive(
+    Json(params): Json<PathParams>,
+) -> Result<Json<Vec<otools::FsItem>>, AppCommandError> {
+    Ok(Json(otools::read_directory_recursive(params.path).await?))
+}
+
+pub async fn create_directory(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::create_directory(params.path).await?;
+    Ok(Json(()))
+}
+
+pub async fn delete_file(Json(params): Json<PathParams>) -> Result<Json<()>, AppCommandError> {
+    otools::delete_file(params.path).await?;
+    Ok(Json(()))
+}
+
+pub async fn delete_directory(Json(params): Json<PathParams>) -> Result<Json<()>, AppCommandError> {
+    otools::delete_directory(params.path).await?;
+    Ok(Json(()))
 }
 
 fn require_state(value: Option<Value>) -> Result<Value, AppCommandError> {

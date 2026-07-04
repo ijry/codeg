@@ -4615,6 +4615,7 @@ dependencies = [
  "base64 0.22.1",
  "otools-ai",
  "otools-core",
+ "otools-platform-filesystem",
  "otools-platform-host",
  "otools-plugin-config",
  "otools-plugin-dev",
@@ -4630,6 +4631,14 @@ version = "0.1.0"
 dependencies = [
  "tauri",
  "tauri-plugin-autostart",
+]
+
+[[package]]
+name = "otools-platform-filesystem"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "serde",
 ]
 
 [[package]]

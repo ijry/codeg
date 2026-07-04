@@ -12,6 +12,10 @@ pub use otools_ai::{
     OtoolsAiChatMessageRecord, OtoolsAiConfigInput, OtoolsAiGenerateTextRequest,
     OtoolsAiGenerateTextResult,
 };
+pub use otools_platform_filesystem::{
+    create_directory, delete_directory, delete_file, read_directory_recursive, read_file_content,
+    write_file_content, FsItem,
+};
 pub use otools_platform_host::{
     project_runner_read_scripts, ProjectScriptInfo, ProjectScriptsResponse,
     otools_copy_text, otools_host_clean_storage_items, otools_host_clean_storage_paths,

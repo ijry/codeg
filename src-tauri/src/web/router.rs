@@ -393,6 +393,27 @@ pub fn build_router(
             post(handlers::otools::otools_get_plugin_asset),
         )
         .route(
+            "/read_file_content",
+            post(handlers::otools::read_file_content),
+        )
+        .route(
+            "/write_file_content",
+            post(handlers::otools::write_file_content),
+        )
+        .route(
+            "/read_directory_recursive",
+            post(handlers::otools::read_directory_recursive),
+        )
+        .route(
+            "/create_directory",
+            post(handlers::otools::create_directory),
+        )
+        .route("/delete_file", post(handlers::otools::delete_file))
+        .route(
+            "/delete_directory",
+            post(handlers::otools::delete_directory),
+        )
+        .route(
             "/get_otools_config",
             post(handlers::otools::get_otools_config),
         )
