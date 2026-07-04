@@ -24,10 +24,13 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
+  getOtoolsLaunchAtStartup,
   getOtoolsConfig,
   getOtoolsConfigValue,
+  setOtoolsLaunchAtStartup,
   saveOtoolsConfigValue,
 } from "@/lib/otools/api"
+import { isDesktop } from "@/lib/transport"
 import {
   AI_PROVIDER_ALIYUN_BAILIAN,
   ALIYUN_BAILIAN_REGION_OPTIONS,
@@ -77,6 +80,8 @@ export function ConfigPluginView({
   const [otoolsTabCount, setOtoolsTabCount] = useState(0)
   const [otoolsActiveTab, setOtoolsActiveTab] = useState("home")
   const [configLoading, setConfigLoading] = useState(true)
+  const [launchAtStartup, setLaunchAtStartup] = useState(false)
+  const [launchAtStartupPending, setLaunchAtStartupPending] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
@@ -91,9 +96,11 @@ export function ConfigPluginView({
   const localeUnsupported =
     basicSettings.locale !== "system" &&
     !isHostLocaleSupported(basicSettings.locale)
+  const canManageLaunchAtStartup = isDesktop()
 
   const loadConfig = useCallback(async () => {
     setConfigLoading(true)
+    setLaunchAtStartupPending(canManageLaunchAtStartup)
     setError(null)
     setStatus(null)
     try {
@@ -115,12 +122,22 @@ export function ConfigPluginView({
           : createHostMirroredBasicSettings()
       )
       setAiSettings(mergeAiSettings(globalAi))
+      if (canManageLaunchAtStartup) {
+        try {
+          setLaunchAtStartup(await getOtoolsLaunchAtStartup())
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err))
+        }
+      } else {
+        setLaunchAtStartup(false)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setConfigLoading(false)
+      setLaunchAtStartupPending(false)
     }
-  }, [])
+  }, [canManageLaunchAtStartup])
 
   useEffect(() => {
     void loadConfig()
@@ -162,6 +179,33 @@ export function ConfigPluginView({
     setStatus("已重置到宿主当前主题/语言与默认 AI 配置")
     setError(null)
   }, [])
+
+  const updateLaunchAtStartup = useCallback(
+    async (checked: boolean | "indeterminate") => {
+      if (!canManageLaunchAtStartup || launchAtStartupPending) {
+        return
+      }
+
+      const enabled = checked === true
+      const previous = launchAtStartup
+      setLaunchAtStartup(enabled)
+      setLaunchAtStartupPending(true)
+      setError(null)
+      setStatus(null)
+
+      try {
+        const actual = await setOtoolsLaunchAtStartup(enabled)
+        setLaunchAtStartup(actual)
+        setStatus(actual ? "已开启宿主开机启动" : "已关闭宿主开机启动")
+      } catch (err) {
+        setLaunchAtStartup(previous)
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setLaunchAtStartupPending(false)
+      }
+    },
+    [canManageLaunchAtStartup, launchAtStartup, launchAtStartupPending]
+  )
 
   return (
     <div className="min-h-0 flex-1 overflow-auto p-6">
@@ -325,14 +369,21 @@ export function ConfigPluginView({
 
               <div className="rounded-xl border bg-muted/30 p-4">
                 <div className="flex items-start gap-3">
-                  <Checkbox checked={false} disabled aria-hidden />
+                  <Checkbox
+                    checked={launchAtStartup}
+                    disabled={
+                      !canManageLaunchAtStartup ||
+                      configLoading ||
+                      launchAtStartupPending
+                    }
+                    onCheckedChange={updateLaunchAtStartup}
+                  />
                   <div className="space-y-1">
                     <Label className="text-sm">开机启动</Label>
                     <p className="text-xs leading-5 text-muted-foreground">
-                      codeg-plus 当前宿主还没有接入 MenuGit 的
-                      `otools_get_launch_at_startup` /
-                      `otools_set_launch_at_startup`
-                      原生能力，因此这里先固定为未启用。
+                      {canManageLaunchAtStartup
+                        ? "调用本地 codeg-plus 宿主启动项能力；该状态不写入 OTools 配置文件。"
+                        : "网页 / 远端服务模式没有本地宿主，无法提供开机启动能力。"}
                     </p>
                   </div>
                 </div>

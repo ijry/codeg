@@ -187,6 +187,7 @@ mod tauri_app {
             .plugin(tauri_plugin_updater::Builder::new().build())
             .plugin(tauri_plugin_process::init())
             .plugin(tauri_plugin_notification::init())
+            .plugin(otools_platform_app::init_plugin())
             .manage(ConnectionManager::new())
             .manage(TerminalManager::new())
             .manage(ChatChannelManager::new())
@@ -956,6 +957,9 @@ mod tauri_app {
                 otools_commands::project_editor_open,
                 otools_commands::project_runner_open_in_terminal,
                 otools_commands::project_runner_read_scripts,
+                otools_commands::otools_request_app_exit,
+                otools_commands::otools_get_launch_at_startup,
+                otools_commands::otools_set_launch_at_startup,
                 otools_commands::otools_host_info,
                 otools_commands::otools_get_plugin,
                 otools_commands::otools_plugin_state_get,

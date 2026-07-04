@@ -101,6 +101,33 @@ pub async fn otools_show_main_window(app: tauri::AppHandle) -> Result<(), AppCom
     Ok(())
 }
 
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_request_app_exit(app: tauri::AppHandle) -> Result<(), AppCommandError> {
+    otools_platform_app::otools_request_app_exit(app).map_err(map_platform_app_error)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_get_launch_at_startup(
+    app: tauri::AppHandle,
+) -> Result<bool, AppCommandError> {
+    otools_platform_app::otools_get_launch_at_startup(app)
+        .await
+        .map_err(map_platform_app_error)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_set_launch_at_startup(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<bool, AppCommandError> {
+    otools_platform_app::otools_set_launch_at_startup(app, enabled)
+        .await
+        .map_err(map_platform_app_error)
+}
+
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn project_editor_open(
     path: String,
@@ -762,6 +789,11 @@ fn map_host_error(error: otools_host::HostError) -> AppCommandError {
     } else {
         app_error
     }
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn map_platform_app_error(message: String) -> AppCommandError {
+    AppCommandError::task_execution_failed(message)
 }
 
 #[cfg(feature = "tauri-runtime")]

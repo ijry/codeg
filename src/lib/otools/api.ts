@@ -132,6 +132,32 @@ export async function emitOtoolsShellShortcut(
   return getTransport().call("otools_emit_tools_shell_shortcut", { action })
 }
 
+export async function requestOtoolsAppExit(): Promise<void> {
+  if (!isDesktop()) {
+    throw new Error("网页模式不支持退出本地 codeg-plus 宿主")
+  }
+  return getShellTransport().call("otools_request_app_exit")
+}
+
+export async function getOtoolsLaunchAtStartup(): Promise<boolean> {
+  if (!isDesktop()) {
+    return false
+  }
+  return getShellTransport().call("otools_get_launch_at_startup")
+}
+
+export async function setOtoolsLaunchAtStartup(
+  enabled: boolean
+): Promise<boolean> {
+  if (!isDesktop()) {
+    if (enabled) {
+      throw new Error("网页模式不支持设置本地 codeg-plus 开机启动")
+    }
+    return false
+  }
+  return getShellTransport().call("otools_set_launch_at_startup", { enabled })
+}
+
 export async function invokeOtoolsNative<T = unknown>(
   pluginUuid: string,
   method: string,

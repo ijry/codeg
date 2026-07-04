@@ -10,6 +10,7 @@ import {
 } from "@/lib/platform"
 import {
   getActiveRemoteConnectionId,
+  getShellTransport,
   getTransport,
   isDesktop,
 } from "@/lib/transport"
@@ -781,10 +782,13 @@ async function dispatchOtoolsCommand(
       window.dispatchEvent(new Event(OTOOLS_HOST_RELOAD_PLUGINS_EVENT))
       return true
     case "otools_request_app_exit":
+      if (isDesktop()) {
+        return getShellTransport().call("otools_request_app_exit")
+      }
       return closeCurrentWindow()
     case "show_main_window":
       if (isDesktop()) {
-        return getTransport().call("otools_show_main_window")
+        return getShellTransport().call("otools_show_main_window")
       }
       try {
         window.opener?.focus()
@@ -877,8 +881,16 @@ async function dispatchOtoolsCommand(
     case "plugin:window|get_all_windows":
       return [WINDOW_LABEL]
     case "otools_get_launch_at_startup":
+      if (isDesktop()) {
+        return getShellTransport().call("otools_get_launch_at_startup")
+      }
       return false
     case "otools_set_launch_at_startup":
+      if (isDesktop()) {
+        return getShellTransport().call("otools_set_launch_at_startup", {
+          enabled: readBooleanField(payload, "enabled"),
+        })
+      }
       if (readBooleanField(payload, "enabled")) {
         throw new Error("codeg-plus 暂未实现 launch-at-startup 宿主能力")
       }
