@@ -134,12 +134,45 @@ const CONFIG_COMMANDS = new Set([
 const HOST_FORWARD_PREFIXES = ["dev_", "park_"]
 
 const WINDOW_LABEL = "otools"
+const LOCAL_TERMINAL_OUTPUT_EVENT = "local-terminal-output"
+const LOCAL_TERMINAL_STATUS_EVENT = "local-terminal-status"
+const MAX_LOCAL_TERMINAL_BUFFERED_EVENTS = 400
+
+type OtoolsHostTerminalEventPayload = {
+  terminal_id?: string
+  data?: string | null
+}
+
+type OtoolsLocalTerminalBufferedEvent =
+  | {
+      kind: "output"
+      sessionId: string
+      output: string
+    }
+  | {
+      kind: "status"
+      sessionId: string
+      status: string
+      message: string
+    }
+
+type OtoolsLocalTerminalSession = {
+  unlistenOutput: (() => void) | null
+  unlistenExit: (() => void) | null
+}
+
 let copiedHostFiles: string[] = []
 
 export function installOtoolsFrameBridge(
   frame: HTMLIFrameElement,
   pluginUuid: string
 ): () => void {
+  const localTerminalSessions = new Map<string, OtoolsLocalTerminalSession>()
+  const localTerminalBuffers = new Map<
+    string,
+    OtoolsLocalTerminalBufferedEvent[]
+  >()
+
   async function handleMessage(event: MessageEvent<OtoolsBridgeRequest>) {
     if (event.source !== frame.contentWindow) return
     const request = event.data
@@ -152,10 +185,13 @@ export function installOtoolsFrameBridge(
     }
 
     try {
-      response.data = await dispatchOtoolsCommand(
+      response.data = await dispatchOtoolsFrameCommand(
+        frame,
         pluginUuid,
         request.command,
-        request.payload
+        request.payload,
+        localTerminalSessions,
+        localTerminalBuffers
       )
     } catch (error) {
       response.ok = false
@@ -166,7 +202,297 @@ export function installOtoolsFrameBridge(
   }
 
   window.addEventListener("message", handleMessage)
-  return () => window.removeEventListener("message", handleMessage)
+  return () => {
+    window.removeEventListener("message", handleMessage)
+    for (const sessionId of [...localTerminalSessions.keys()]) {
+      void disposeLocalTerminalSession(localTerminalSessions, sessionId)
+    }
+    localTerminalBuffers.clear()
+  }
+}
+
+async function dispatchOtoolsFrameCommand(
+  frame: HTMLIFrameElement,
+  pluginUuid: string,
+  command: string,
+  payload: unknown,
+  localTerminalSessions: Map<string, OtoolsLocalTerminalSession>,
+  localTerminalBuffers: Map<string, OtoolsLocalTerminalBufferedEvent[]>
+): Promise<unknown> {
+  switch (command) {
+    case "start_local_terminal_session":
+      return startLocalTerminalSession(
+        frame,
+        payload,
+        localTerminalSessions,
+        localTerminalBuffers
+      )
+    case "pull_local_terminal_events":
+      return pullLocalTerminalEvents(payload, localTerminalBuffers)
+    case "send_local_terminal_input":
+      return sendLocalTerminalInput(payload)
+    case "resize_local_terminal_session":
+      return resizeLocalTerminalSession(payload)
+    case "close_local_terminal_session":
+      return closeLocalTerminalSession(
+        frame,
+        payload,
+        localTerminalSessions,
+        localTerminalBuffers
+      )
+    default:
+      return dispatchOtoolsCommand(pluginUuid, command, payload)
+  }
+}
+
+async function startLocalTerminalSession(
+  frame: HTMLIFrameElement,
+  payload: unknown,
+  localTerminalSessions: Map<string, OtoolsLocalTerminalSession>,
+  localTerminalBuffers: Map<string, OtoolsLocalTerminalBufferedEvent[]>
+): Promise<string> {
+  const sessionId = readStringField(payload, "sessionId").trim()
+  if (!sessionId) {
+    throw new Error("sessionId is required")
+  }
+
+  await disposeLocalTerminalSession(localTerminalSessions, sessionId)
+  try {
+    await getTransport().call("terminal_kill", {
+      terminalId: sessionId,
+    })
+  } catch (error) {
+    if (!isTerminalNotFoundError(error)) {
+      throw error
+    }
+  }
+  localTerminalBuffers.set(sessionId, [])
+
+  const outputEvent = `terminal://output/${sessionId}`
+  const exitEvent = `terminal://exit/${sessionId}`
+  const session: OtoolsLocalTerminalSession = {
+    unlistenOutput: null,
+    unlistenExit: null,
+  }
+  localTerminalSessions.set(sessionId, session)
+
+  try {
+    session.unlistenOutput =
+      await getTransport().subscribe<OtoolsHostTerminalEventPayload>(
+        outputEvent,
+        (event) => {
+          emitLocalTerminalOutput(
+            frame,
+            localTerminalBuffers,
+            sessionId,
+            typeof event?.data === "string" ? event.data : ""
+          )
+        }
+      )
+
+    session.unlistenExit =
+      await getTransport().subscribe<OtoolsHostTerminalEventPayload>(
+        exitEvent,
+        () => {
+          emitLocalTerminalStatus(
+            frame,
+            localTerminalBuffers,
+            sessionId,
+            "closed"
+          )
+          void disposeLocalTerminalSession(localTerminalSessions, sessionId)
+        }
+      )
+
+    const workingDir = readOptionalStringField(payload, "workingDir") || "."
+    const shell = readOptionalStringField(payload, "shell")
+    const initialCommand = readOptionalStringField(payload, "initialCommand")
+
+    const terminalId = await getTransport().call<string>("terminal_spawn", {
+      workingDir,
+      shell,
+      initialCommand,
+      terminalId: sessionId,
+    })
+
+    emitLocalTerminalStatus(frame, localTerminalBuffers, sessionId, "connected")
+
+    return String(terminalId || sessionId)
+  } catch (error) {
+    emitLocalTerminalStatus(
+      frame,
+      localTerminalBuffers,
+      sessionId,
+      "error",
+      formatBridgeError(error)
+    )
+    await disposeLocalTerminalSession(localTerminalSessions, sessionId)
+    throw error
+  }
+}
+
+function pullLocalTerminalEvents(
+  payload: unknown,
+  localTerminalBuffers: Map<string, OtoolsLocalTerminalBufferedEvent[]>
+): OtoolsLocalTerminalBufferedEvent[] {
+  const sessionId = readStringField(payload, "sessionId").trim()
+  if (!sessionId) {
+    throw new Error("sessionId is required")
+  }
+
+  const events = [...(localTerminalBuffers.get(sessionId) ?? [])]
+  localTerminalBuffers.set(sessionId, [])
+  return events
+}
+
+async function sendLocalTerminalInput(payload: unknown): Promise<void> {
+  const sessionId = readStringField(payload, "sessionId").trim()
+  if (!sessionId) {
+    throw new Error("sessionId is required")
+  }
+
+  await getTransport().call("terminal_write", {
+    terminalId: sessionId,
+    data: readStringField(payload, "input"),
+  })
+}
+
+async function resizeLocalTerminalSession(payload: unknown): Promise<void> {
+  const sessionId = readStringField(payload, "sessionId").trim()
+  if (!sessionId) {
+    throw new Error("sessionId is required")
+  }
+
+  await getTransport().call("terminal_resize", {
+    terminalId: sessionId,
+    cols: readNumberField(payload, "cols", 80),
+    rows: readNumberField(payload, "rows", 24),
+  })
+}
+
+async function closeLocalTerminalSession(
+  frame: HTMLIFrameElement,
+  payload: unknown,
+  localTerminalSessions: Map<string, OtoolsLocalTerminalSession>,
+  localTerminalBuffers: Map<string, OtoolsLocalTerminalBufferedEvent[]>
+): Promise<void> {
+  const sessionId = readStringField(payload, "sessionId").trim()
+  if (!sessionId) {
+    throw new Error("sessionId is required")
+  }
+
+  await disposeLocalTerminalSession(localTerminalSessions, sessionId)
+
+  try {
+    await getTransport().call("terminal_kill", {
+      terminalId: sessionId,
+    })
+  } catch (error) {
+    if (!isTerminalNotFoundError(error)) {
+      throw error
+    }
+  }
+
+  emitLocalTerminalStatus(frame, localTerminalBuffers, sessionId, "closed")
+}
+
+async function disposeLocalTerminalSession(
+  localTerminalSessions: Map<string, OtoolsLocalTerminalSession>,
+  sessionId: string
+): Promise<void> {
+  const session = localTerminalSessions.get(sessionId)
+  if (!session) return
+
+  localTerminalSessions.delete(sessionId)
+
+  const unsubscribeTasks = [session.unlistenOutput, session.unlistenExit]
+    .filter(Boolean)
+    .map((unsubscribe) =>
+      Promise.resolve()
+        .then(() => unsubscribe?.())
+        .catch(() => {})
+    )
+
+  if (unsubscribeTasks.length > 0) {
+    await Promise.allSettled(unsubscribeTasks)
+  }
+}
+
+function emitLocalTerminalOutput(
+  frame: HTMLIFrameElement,
+  localTerminalBuffers: Map<string, OtoolsLocalTerminalBufferedEvent[]>,
+  sessionId: string,
+  output: string
+) {
+  const payload = {
+    sessionId,
+    output,
+  }
+  pushLocalTerminalBufferedEvent(localTerminalBuffers, sessionId, {
+    kind: "output",
+    sessionId,
+    output,
+  })
+  postBridgeEvent(frame, LOCAL_TERMINAL_OUTPUT_EVENT, payload)
+}
+
+function emitLocalTerminalStatus(
+  frame: HTMLIFrameElement,
+  localTerminalBuffers: Map<string, OtoolsLocalTerminalBufferedEvent[]>,
+  sessionId: string,
+  status: string,
+  message = ""
+) {
+  const payload = {
+    sessionId,
+    status,
+    message,
+  }
+  pushLocalTerminalBufferedEvent(localTerminalBuffers, sessionId, {
+    kind: "status",
+    sessionId,
+    status,
+    message,
+  })
+  postBridgeEvent(frame, LOCAL_TERMINAL_STATUS_EVENT, payload)
+}
+
+function pushLocalTerminalBufferedEvent(
+  localTerminalBuffers: Map<string, OtoolsLocalTerminalBufferedEvent[]>,
+  sessionId: string,
+  event: OtoolsLocalTerminalBufferedEvent
+) {
+  const buffer = localTerminalBuffers.get(sessionId) ?? []
+  buffer.push(event)
+
+  if (buffer.length > MAX_LOCAL_TERMINAL_BUFFERED_EVENTS) {
+    buffer.splice(0, buffer.length - MAX_LOCAL_TERMINAL_BUFFERED_EVENTS)
+  }
+
+  localTerminalBuffers.set(sessionId, buffer)
+}
+
+function postBridgeEvent(
+  frame: HTMLIFrameElement,
+  event: string,
+  payload: unknown
+) {
+  frame.contentWindow?.postMessage(
+    {
+      type: "otools:host-event",
+      event,
+      payload,
+    },
+    "*"
+  )
+}
+
+function isTerminalNotFoundError(error: unknown): boolean {
+  return formatBridgeError(error).toLowerCase().includes("terminal not found")
+}
+
+function formatBridgeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export async function loadOtoolsPluginDocument(
@@ -798,6 +1124,13 @@ function otoolsCompatBootstrap(config: {
 
   window.addEventListener("message", (event) => {
     const message = event.data
+    if (message && message.type === "otools:host-event") {
+      emitLocalEvent({
+        event: toStringSafe(message.event).trim(),
+        payload: message.payload ?? null,
+      })
+      return
+    }
     if (!message || message.type !== "otools:invoke-result") {
       return
     }
@@ -1610,6 +1943,27 @@ function readOptionalStringField(
 ): string | null {
   const value = readStringField(payload, field).trim()
   return value || null
+}
+
+function readNumberField(
+  payload: unknown,
+  field: string,
+  fallback: number
+): number {
+  const record = asRecord(payload)
+  const direct = record?.[field]
+  const raw =
+    typeof direct === "number" || typeof direct === "string"
+      ? Number(direct)
+      : typeof payload === "number" || typeof payload === "string"
+        ? Number(payload)
+        : Number.NaN
+
+  if (!Number.isFinite(raw)) {
+    return fallback
+  }
+
+  return Math.max(1, Math.floor(raw))
 }
 
 function readStringArrayField(payload: unknown, field: string): string[] {
