@@ -227,6 +227,26 @@ export async function publishDevVersion(input: {
   return getTransport().call("dev_publish_version", { input })
 }
 
+export async function reloadOtoolsPlugins(): Promise<void> {
+  return getTransport().call("otools_reload_all_plugins")
+}
+
+export async function openProjectInEditor(
+  path: string,
+  editorId = "vscode"
+): Promise<void> {
+  return getTransport().call("project_editor_open", {
+    path,
+    editorId,
+  })
+}
+
+export async function openProjectInTerminal(workingDir: string): Promise<void> {
+  return getTransport().call("project_runner_open_in_terminal", {
+    workingDir,
+  })
+}
+
 export async function getParkWorkspace(cate?: string): Promise<ParkWorkspace> {
   return getTransport().call("park_get_workspace", { cate })
 }
