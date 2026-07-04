@@ -30,6 +30,7 @@ tauri-runtime = [
     "dep:tauri-plugin-single-instance",
     "dep:keyring",
     "dep:otools-platform-app",
+    "dep:otools-platform-shortcuts",
 ]
 # Exposes test scaffolding (`AppState::new_for_test`, `EventEmitter::test_web_only`,
 # `ConnectionManager::insert_test_connection`, parser `with_base_dir`, the
@@ -115,6 +116,7 @@ semver = "1"
 ngrok = "0.19.0"
 otools-host = { path = "../otools/host" }
 otools-platform-app = { path = "../otools/platform/app", optional = true }
+otools-platform-shortcuts = { path = "../otools/platform/shortcuts", optional = true }
 url = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "registry", "std"] }

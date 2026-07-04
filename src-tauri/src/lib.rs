@@ -188,9 +188,11 @@ mod tauri_app {
             .plugin(tauri_plugin_process::init())
             .plugin(tauri_plugin_notification::init())
             .plugin(otools_platform_app::init_plugin())
+            .plugin(otools_platform_shortcuts::init_plugin())
             .manage(ConnectionManager::new())
             .manage(TerminalManager::new())
             .manage(ChatChannelManager::new())
+            .manage(otools_platform_shortcuts::build_global_shortcut_state())
             .manage(windows::SettingsWindowState::new())
             .manage(windows::CommitWindowState::new())
             .manage(windows::MergeWindowState::new())
@@ -225,6 +227,8 @@ mod tauri_app {
             .manage(crate::update::new_update_state_handle())
             .setup(|app| {
                 let app_data_dir = app.path().app_data_dir()?;
+                otools_platform_shortcuts::initialize_global_shortcuts(&app.handle())
+                    .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
 
                 // Unify the data root across every consumer:
                 //   * SQLite database (initialised below)
@@ -960,6 +964,10 @@ mod tauri_app {
                 otools_commands::otools_request_app_exit,
                 otools_commands::otools_get_launch_at_startup,
                 otools_commands::otools_set_launch_at_startup,
+                otools_commands::otools_get_global_shortcut_bindings,
+                otools_commands::otools_get_global_shortcut_binding,
+                otools_commands::otools_upsert_global_shortcut_binding,
+                otools_commands::otools_remove_global_shortcut_binding,
                 otools_commands::otools_host_info,
                 otools_commands::otools_get_plugins_file_path,
                 otools_commands::otools_get_plugin,

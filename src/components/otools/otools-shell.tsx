@@ -22,7 +22,7 @@ import {
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { getServerBaseUrl } from "@/lib/transport"
+import { getServerBaseUrl, getShellTransport, isDesktop } from "@/lib/transport"
 import {
   OTOOLS_HOST_CLOSE_TAB_EVENT,
   OTOOLS_HOST_CREATE_TAB_EVENT,
@@ -47,6 +47,14 @@ import {
   listOtoolsPlugins,
 } from "@/lib/otools/api"
 import { useOtoolsChildWebviewSync } from "@/lib/otools/child-webview-sync"
+import {
+  clearPendingOtoolsGlobalShortcut,
+  hasHandledOtoolsGlobalShortcut,
+  markHandledOtoolsGlobalShortcut,
+  OTOOLS_GLOBAL_SHORTCUT_EVENT,
+  readPendingOtoolsGlobalShortcut,
+  type OtoolsGlobalShortcutTriggeredPayload,
+} from "@/lib/otools/shortcut-events"
 import type { OtoolsHostInfo, OtoolsPluginInfo } from "@/lib/otools/types"
 import { OtoolsPluginFrame } from "./otools-plugin-frame"
 
@@ -268,6 +276,36 @@ export function OtoolsShell() {
     setActiveTabId(nextTab.id)
   }, [])
 
+  const handleGlobalShortcut = useCallback(
+    (payload: OtoolsGlobalShortcutTriggeredPayload | null): boolean => {
+      if (!payload) {
+        return false
+      }
+
+      if (hasHandledOtoolsGlobalShortcut(payload)) {
+        clearPendingOtoolsGlobalShortcut()
+        return true
+      }
+
+      const plugin =
+        plugins.find(
+          (item) =>
+            item.uuid === payload.pluginUuid ||
+            item.packid === payload.pluginUuid
+        ) ?? null
+
+      if (!plugin) {
+        return false
+      }
+
+      openPlugin(plugin)
+      markHandledOtoolsGlobalShortcut(payload)
+      clearPendingOtoolsGlobalShortcut()
+      return true
+    },
+    [openPlugin, plugins]
+  )
+
   const openHostManagedTab = useCallback(
     (detail: OtoolsHostCreateTabDetail) => {
       const label = String(detail.label || "").trim()
@@ -374,6 +412,49 @@ export function OtoolsShell() {
       )
     }
   }, [closeTab, openHostManagedTab, runShellShortcutAction, tabs])
+
+  useEffect(() => {
+    handleGlobalShortcut(readPendingOtoolsGlobalShortcut())
+  }, [handleGlobalShortcut, plugins])
+
+  useEffect(() => {
+    if (!isDesktop()) {
+      return
+    }
+
+    let dispose: (() => void) | null = null
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const off = await getShellTransport().subscribe<unknown>(
+          OTOOLS_GLOBAL_SHORTCUT_EVENT,
+          (payload) => {
+            if (
+              !handleGlobalShortcut(
+                payload as OtoolsGlobalShortcutTriggeredPayload
+              )
+            ) {
+              return
+            }
+          }
+        )
+
+        if (cancelled) {
+          off()
+        } else {
+          dispose = off
+        }
+      } catch (error) {
+        console.warn("[otools-shortcut] shell subscribe failed:", error)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      dispose?.()
+    }
+  }, [handleGlobalShortcut])
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden">

@@ -13,6 +13,8 @@ pub use otools_host::{
     ParkUninstallInput, ParkUninstallResult, ParkWorkspace, ProjectScriptsResponse,
     WebviewDirEntry, WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
 };
+#[cfg(feature = "tauri-runtime")]
+pub use otools_platform_shortcuts::OtoolsGlobalShortcutBinding;
 
 pub fn open_otools_window_core() -> OtoolsNavigationResult {
     otools_host::open_otools_window_core()
@@ -126,6 +128,46 @@ pub async fn otools_set_launch_at_startup(
     otools_platform_app::otools_set_launch_at_startup(app, enabled)
         .await
         .map_err(map_platform_app_error)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_get_global_shortcut_bindings(
+    state: tauri::State<'_, otools_platform_shortcuts::OtoolsGlobalShortcutState>,
+) -> Result<Vec<OtoolsGlobalShortcutBinding>, AppCommandError> {
+    otools_platform_shortcuts::otools_get_global_shortcut_bindings(&state).map_err(map_host_error)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_get_global_shortcut_binding(
+    plugin_uuid: String,
+    state: tauri::State<'_, otools_platform_shortcuts::OtoolsGlobalShortcutState>,
+) -> Result<Option<OtoolsGlobalShortcutBinding>, AppCommandError> {
+    otools_platform_shortcuts::otools_get_global_shortcut_binding(plugin_uuid, &state)
+        .map_err(map_host_error)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_upsert_global_shortcut_binding(
+    app: tauri::AppHandle,
+    binding: OtoolsGlobalShortcutBinding,
+    state: tauri::State<'_, otools_platform_shortcuts::OtoolsGlobalShortcutState>,
+) -> Result<OtoolsGlobalShortcutBinding, AppCommandError> {
+    otools_platform_shortcuts::otools_upsert_global_shortcut_binding(app, binding, &state)
+        .map_err(map_host_error)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_remove_global_shortcut_binding(
+    app: tauri::AppHandle,
+    plugin_uuid: String,
+    state: tauri::State<'_, otools_platform_shortcuts::OtoolsGlobalShortcutState>,
+) -> Result<(), AppCommandError> {
+    otools_platform_shortcuts::otools_remove_global_shortcut_binding(app, plugin_uuid, &state)
+        .map_err(map_host_error)
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]

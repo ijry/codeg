@@ -948,6 +948,42 @@ async function dispatchOtoolsCommand(
         throw new Error("codeg-plus 暂未实现 launch-at-startup 宿主能力")
       }
       return false
+    case "otools_get_global_shortcut_bindings":
+      if (isDesktop()) {
+        return getShellTransport().call("otools_get_global_shortcut_bindings")
+      }
+      return []
+    case "otools_get_global_shortcut_binding":
+      if (isDesktop()) {
+        return getShellTransport().call("otools_get_global_shortcut_binding", {
+          pluginUuid: readStringField(payload, "pluginUuid"),
+        })
+      }
+      return null
+    case "otools_upsert_global_shortcut_binding":
+      if (isDesktop()) {
+        return getShellTransport().call(
+          "otools_upsert_global_shortcut_binding",
+          {
+            binding: {
+              pluginUuid: readStringField(payload, "pluginUuid"),
+              shortcut: readStringField(payload, "shortcut"),
+              enabled: readBooleanField(payload, "enabled"),
+            },
+          }
+        )
+      }
+      throw new Error("网页模式不支持 OTools 全局快捷键")
+    case "otools_remove_global_shortcut_binding":
+      if (isDesktop()) {
+        return getShellTransport().call(
+          "otools_remove_global_shortcut_binding",
+          {
+            pluginUuid: readStringField(payload, "pluginUuid"),
+          }
+        )
+      }
+      return
     default:
       break
   }

@@ -13,6 +13,7 @@ import { OverlayScrollbarsInit } from "@/components/overlay-scrollbars-init"
 import { ClipboardFallbackInit } from "@/components/clipboard-fallback-init"
 import { WebConnectionGuard } from "@/components/connection/web-connection-guard"
 import { WindowResizeGrips } from "@/components/layout/window-resize-grips"
+import { OtoolsGlobalShortcutBridge } from "@/components/otools/otools-global-shortcut-bridge"
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -72,6 +73,7 @@ export default async function RootLayout({
                 <OverlayScrollbarsInit />
                 <ClipboardFallbackInit />
                 <WebConnectionGuard />
+                <OtoolsGlobalShortcutBridge />
                 <WindowResizeGrips />
                 {children}
               </AppearanceProvider>
