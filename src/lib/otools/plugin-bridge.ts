@@ -136,6 +136,13 @@ const FILESYSTEM_COMMANDS = new Set([
   "delete_directory",
 ])
 
+const PACKAGE_MANAGER_COMMANDS = new Set([
+  "otools_host_run_winget_install",
+  "otools_host_run_package_action",
+  "otools_host_get_package_status",
+  "otools_host_get_packages_status",
+])
+
 const NOTIFICATION_COMMANDS = new Set([
   "__otools_show_notification",
   "otools_show_notification",
@@ -682,6 +689,10 @@ async function dispatchOtoolsCommand(
   }
 
   if (FILESYSTEM_COMMANDS.has(command)) {
+    return getTransport().call(command, asRecord(payload) ?? {})
+  }
+
+  if (PACKAGE_MANAGER_COMMANDS.has(command)) {
     return getTransport().call(command, asRecord(payload) ?? {})
   }
 
