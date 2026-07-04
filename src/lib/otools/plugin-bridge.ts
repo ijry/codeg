@@ -38,8 +38,12 @@ import {
   OTOOLS_HOST_RELOAD_PLUGINS_EVENT,
   OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
   OTOOLS_HOST_SWITCH_TAB_EVENT,
+  dispatchOtoolsChildLocaleSync,
+  dispatchOtoolsChildThemeSync,
   type OtoolsHostCloseTabDetail,
   type OtoolsHostCreateTabDetail,
+  type OtoolsHostChildLocaleSyncDetail,
+  type OtoolsHostChildThemeSyncDetail,
   type OtoolsHostShellShortcutDetail,
   type OtoolsHostSwitchTabDetail,
   type OtoolsHostWindowState,
@@ -843,11 +847,50 @@ async function dispatchOtoolsCommand(
     case "tools_tab_exists":
       return hostTabExists(readStringField(payload, "label"))
     case "set_tools_loading_state":
-    case "tools_sync_child_webview_locale":
-    case "create_embedded_webview":
-    case "close_embedded_webview":
-    case "switch_and_position_embedded_webviews":
       return true
+    case "tools_sync_child_webview_theme":
+      dispatchOtoolsChildThemeSync({
+        themeMode: readOptionalStringField(payload, "themeMode"),
+        themeAccent: readOptionalStringField(payload, "themeAccent"),
+        resolvedTheme: readOptionalStringField(payload, "resolvedTheme"),
+      } satisfies OtoolsHostChildThemeSyncDetail)
+      return true
+    case "tools_sync_child_webview_locale":
+      dispatchOtoolsChildLocaleSync({
+        locale: readOptionalStringField(payload, "locale"),
+      } satisfies OtoolsHostChildLocaleSyncDetail)
+      return true
+    case "create_embedded_webview":
+      dispatchHostCustomEvent<OtoolsHostCreateTabDetail>(
+        OTOOLS_HOST_CREATE_TAB_EVENT,
+        {
+          label: readStringField(payload, "label"),
+          title: readOptionalStringField(payload, "title"),
+          url: readOptionalStringField(payload, "url"),
+          pluginUuid:
+            readOptionalStringField(payload, "pluginUuid") || targetPluginUuid,
+        }
+      )
+      return true
+    case "close_embedded_webview":
+      dispatchHostCustomEvent<OtoolsHostCloseTabDetail>(
+        OTOOLS_HOST_CLOSE_TAB_EVENT,
+        {
+          label: readStringField(payload, "label"),
+        }
+      )
+      return true
+    case "switch_and_position_embedded_webviews":
+      dispatchHostCustomEvent<OtoolsHostSwitchTabDetail>(
+        OTOOLS_HOST_SWITCH_TAB_EVENT,
+        {
+          activeLabel: readOptionalStringField(payload, "activeLabel"),
+          allLabels: readStringArrayField(payload, "allLabels"),
+        }
+      )
+      return true
+    case "embedded_webview_exists":
+      return hostTabExists(readStringField(payload, "label"))
     case "__otools_dialog_open":
     case "plugin:dialog|open":
       return openFileDialog(extractDialogOpenOptions(payload))

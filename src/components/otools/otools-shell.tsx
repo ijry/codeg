@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
@@ -45,6 +46,7 @@ import {
   getOtoolsHostInfo,
   listOtoolsPlugins,
 } from "@/lib/otools/api"
+import { useOtoolsChildWebviewSync } from "@/lib/otools/child-webview-sync"
 import type { OtoolsHostInfo, OtoolsPluginInfo } from "@/lib/otools/types"
 import { OtoolsPluginFrame } from "./otools-plugin-frame"
 
@@ -726,6 +728,9 @@ function OtoolsPluginView({
 }
 
 function OtoolsExternalView({ tab }: { tab: ExternalTab }) {
+  const frameRef = useRef<HTMLIFrameElement | null>(null)
+  useOtoolsChildWebviewSync(frameRef, tab.url)
+
   return (
     <>
       <div className="flex h-11 items-center justify-between border-b px-3">
@@ -746,6 +751,7 @@ function OtoolsExternalView({ tab }: { tab: ExternalTab }) {
       </div>
       {tab.url ? (
         <iframe
+          ref={frameRef}
           src={tab.url}
           title={tab.title}
           className="min-h-0 flex-1 border-0 bg-background"

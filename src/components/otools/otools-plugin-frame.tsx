@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { buildOtoolsPluginUrl } from "@/lib/otools/api"
+import { useOtoolsChildWebviewSync } from "@/lib/otools/child-webview-sync"
 import {
   installOtoolsFrameBridge,
   loadOtoolsPluginDocument,
@@ -22,6 +23,7 @@ export function OtoolsPluginFrame({ plugin }: OtoolsPluginFrameProps) {
   const src = useMemo(() => buildOtoolsPluginUrl(plugin), [plugin])
   const error = frameState.pluginUuid === plugin.uuid ? frameState.error : null
   const srcDoc = frameState.pluginUuid === plugin.uuid ? frameState.srcDoc : ""
+  useOtoolsChildWebviewSync(frameRef, `${plugin.uuid}:${srcDoc.length}`)
 
   useEffect(() => {
     const frame = frameRef.current

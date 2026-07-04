@@ -9,6 +9,10 @@ import {
 } from "@/lib/i18n"
 import { updateSystemLanguageSettings } from "@/lib/api"
 import { STORAGE_KEY_THEME_COLOR } from "@/lib/appearance-script"
+import {
+  dispatchOtoolsChildLocaleSync,
+  dispatchOtoolsChildThemeSync,
+} from "@/lib/otools/host-events"
 import type { ThemeColor } from "@/lib/theme-presets"
 import type { AppLocale, SystemLanguageSettings } from "@/lib/types"
 import type {
@@ -442,6 +446,20 @@ export async function syncBasicSettingsToHost(
   const settings = normalizeBasicSettingsForSave(value)
   persistThemeMode(settings.themeMode)
   persistThemeAccent(settings.themeAccent)
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    dispatchOtoolsChildThemeSync({
+      themeMode: settings.themeMode,
+      themeAccent: settings.themeAccent,
+      resolvedTheme: document.documentElement.classList.contains("dark")
+        ? "dark"
+        : "light",
+    })
+    dispatchOtoolsChildLocaleSync({
+      locale:
+        settings.resolvedLocale ||
+        mapAppLocaleToOtoolsLocale(getCurrentEffectiveAppLocale()),
+    })
+  }
 
   const nextAppLocale =
     settings.locale === "system"
