@@ -264,6 +264,27 @@ pub fn build_router(
             post(handlers::otools::otools_list_plugins),
         )
         .route(
+            "/otools_get_all_plugins",
+            post(handlers::otools::otools_get_all_plugins),
+        )
+        .route(
+            "/otools_reload_all_plugins",
+            post(handlers::otools::otools_reload_all_plugins),
+        )
+        .route("/bridge_ping", post(handlers::otools::bridge_ping))
+        .route(
+            "/otools_show_main_window",
+            post(handlers::otools::otools_show_main_window),
+        )
+        .route(
+            "/project_editor_open",
+            post(handlers::otools::project_editor_open),
+        )
+        .route(
+            "/project_runner_open_in_terminal",
+            post(handlers::otools::project_runner_open_in_terminal),
+        )
+        .route(
             "/otools_host_info",
             post(handlers::otools::otools_host_info),
         )

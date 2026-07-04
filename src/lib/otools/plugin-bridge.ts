@@ -14,6 +14,7 @@ import {
   isDesktop,
 } from "@/lib/transport"
 import {
+  listOtoolsPlugins,
   getOtoolsConfig,
   getOtoolsConfigValue,
   getOtoolsPluginAsset,
@@ -28,6 +29,16 @@ import {
   OTOOLS_GLOBAL_BASIC_SETTINGS_KEY,
   syncBasicSettingsToHost,
 } from "./config-runtime"
+import {
+  OTOOLS_HOST_CLOSE_TAB_EVENT,
+  OTOOLS_HOST_CREATE_TAB_EVENT,
+  OTOOLS_HOST_RELOAD_PLUGINS_EVENT,
+  OTOOLS_HOST_SWITCH_TAB_EVENT,
+  type OtoolsHostCloseTabDetail,
+  type OtoolsHostCreateTabDetail,
+  type OtoolsHostSwitchTabDetail,
+  type OtoolsHostWindowState,
+} from "./host-events"
 import type {
   OtoolsBridgeRequest,
   OtoolsBridgeResponse,
@@ -355,6 +366,10 @@ async function dispatchOtoolsCommand(
     return openPath(readStringField(payload, "path"))
   }
 
+  if (command === "open_directory" || command === "openWslUnc") {
+    return openPath(readStringField(payload, "path"))
+  }
+
   if (REVEAL_ITEM_COMMANDS.has(command)) {
     return revealItemInDir(readStringField(payload, "path"))
   }
@@ -399,6 +414,67 @@ async function dispatchOtoolsCommand(
   }
 
   switch (command) {
+    case "bridge_ping":
+      return "invoke-ok"
+    case "otools_get_all_plugins":
+      return listOtoolsPlugins()
+    case "otools_reload_all_plugins":
+      window.dispatchEvent(new Event(OTOOLS_HOST_RELOAD_PLUGINS_EVENT))
+      return true
+    case "otools_request_app_exit":
+      return closeCurrentWindow()
+    case "show_main_window":
+      if (isDesktop()) {
+        return getTransport().call("otools_show_main_window")
+      }
+      try {
+        window.opener?.focus()
+      } catch {}
+      window.focus()
+      return
+    case "project_editor_open":
+      return getTransport().call("project_editor_open", asRecord(payload) ?? {})
+    case "project_runner_open_in_terminal":
+      return getTransport().call(
+        "project_runner_open_in_terminal",
+        asRecord(payload) ?? {}
+      )
+    case "create_tools_tab_window":
+      dispatchHostCustomEvent<OtoolsHostCreateTabDetail>(
+        OTOOLS_HOST_CREATE_TAB_EVENT,
+        {
+          label: readStringField(payload, "label"),
+          title: readOptionalStringField(payload, "title"),
+          url: readOptionalStringField(payload, "url"),
+          pluginUuid: readOptionalStringField(payload, "pluginUuid"),
+        }
+      )
+      return true
+    case "close_tools_tab_window":
+      dispatchHostCustomEvent<OtoolsHostCloseTabDetail>(
+        OTOOLS_HOST_CLOSE_TAB_EVENT,
+        {
+          label: readStringField(payload, "label"),
+        }
+      )
+      return true
+    case "switch_and_position_tools_windows":
+      dispatchHostCustomEvent<OtoolsHostSwitchTabDetail>(
+        OTOOLS_HOST_SWITCH_TAB_EVENT,
+        {
+          activeLabel: readOptionalStringField(payload, "activeLabel"),
+          allLabels: readStringArrayField(payload, "allLabels"),
+        }
+      )
+      return true
+    case "tools_tab_exists":
+      return hostTabExists(readStringField(payload, "label"))
+    case "set_tools_loading_state":
+    case "tools_sync_child_webview_locale":
+    case "create_embedded_webview":
+    case "close_embedded_webview":
+    case "switch_and_position_embedded_webviews":
+      return true
     case "__otools_dialog_open":
     case "plugin:dialog|open":
       return openFileDialog(extractDialogOpenOptions(payload))
@@ -1488,11 +1564,52 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>
 }
 
+function dispatchHostCustomEvent<T>(name: string, detail: T) {
+  window.dispatchEvent(new CustomEvent(name, { detail }))
+}
+
+function readHostWindowState(): OtoolsHostWindowState {
+  const raw = (
+    window as Window & { __CODEG_OTOOLS_HOST_STATE__?: OtoolsHostWindowState }
+  ).__CODEG_OTOOLS_HOST_STATE__
+
+  if (!raw || typeof raw !== "object") {
+    return {
+      tabLabels: [],
+      activeLabel: null,
+    }
+  }
+
+  return {
+    tabLabels: Array.isArray(raw.tabLabels)
+      ? raw.tabLabels.map((item) => String(item || "").trim()).filter(Boolean)
+      : [],
+    activeLabel:
+      typeof raw.activeLabel === "string" && raw.activeLabel.trim()
+        ? raw.activeLabel.trim()
+        : null,
+  }
+}
+
+function hostTabExists(label: string): boolean {
+  const normalized = String(label || "").trim()
+  if (!normalized) return false
+  return readHostWindowState().tabLabels.includes(normalized)
+}
+
 function readStringField(payload: unknown, field: string): string {
   const record = asRecord(payload)
   const direct = record?.[field]
   if (typeof direct === "string") return direct
   return typeof payload === "string" ? payload : ""
+}
+
+function readOptionalStringField(
+  payload: unknown,
+  field: string
+): string | null {
+  const value = readStringField(payload, field).trim()
+  return value || null
 }
 
 function readStringArrayField(payload: unknown, field: string): string[] {

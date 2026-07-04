@@ -43,6 +43,10 @@ export async function listOtoolsPlugins(): Promise<OtoolsPluginInfo[]> {
   return getTransport().call("otools_list_plugins")
 }
 
+export async function getAllOtoolsPlugins(): Promise<OtoolsPluginInfo[]> {
+  return getTransport().call("otools_get_all_plugins")
+}
+
 export async function getOtoolsHostInfo(): Promise<OtoolsHostInfo> {
   return getTransport().call("otools_host_info")
 }

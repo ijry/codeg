@@ -69,6 +69,19 @@ pub struct PathParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProjectEditorOpenParams {
+    pub path: String,
+    pub editor_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRunnerOpenInTerminalParams {
+    pub working_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AssetParams {
     pub plugin_uuid: String,
     pub asset_path: String,
@@ -251,6 +264,39 @@ pub async fn open_otools_window(
 
 pub async fn otools_list_plugins() -> Result<Json<Vec<otools::OtoolsPluginInfo>>, AppCommandError> {
     Ok(Json(otools::otools_list_plugins().await?))
+}
+
+pub async fn otools_get_all_plugins(
+) -> Result<Json<Vec<otools::OtoolsPluginInfo>>, AppCommandError> {
+    Ok(Json(otools::otools_get_all_plugins().await?))
+}
+
+pub async fn otools_reload_all_plugins() -> Result<Json<()>, AppCommandError> {
+    otools::otools_reload_all_plugins().await?;
+    Ok(Json(()))
+}
+
+pub async fn bridge_ping() -> Result<Json<String>, AppCommandError> {
+    Ok(Json(otools::bridge_ping().await?))
+}
+
+pub async fn otools_show_main_window() -> Result<Json<()>, AppCommandError> {
+    otools::otools_show_main_window_core();
+    Ok(Json(()))
+}
+
+pub async fn project_editor_open(
+    Json(params): Json<ProjectEditorOpenParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::project_editor_open(params.path, params.editor_id).await?;
+    Ok(Json(()))
+}
+
+pub async fn project_runner_open_in_terminal(
+    Json(params): Json<ProjectRunnerOpenInTerminalParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::project_runner_open_in_terminal(params.working_dir).await?;
+    Ok(Json(()))
 }
 
 pub async fn otools_host_info() -> Result<Json<otools::OtoolsHostInfo>, AppCommandError> {

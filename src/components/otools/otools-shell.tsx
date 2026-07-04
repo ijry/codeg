@@ -10,16 +10,28 @@ import {
 import {
   Box,
   Boxes,
+  ChevronLeft,
   Code2,
   ExternalLink,
   Home,
   Package,
   RefreshCw,
   Store,
+  X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { getServerBaseUrl } from "@/lib/transport"
+import {
+  OTOOLS_HOST_CLOSE_TAB_EVENT,
+  OTOOLS_HOST_CREATE_TAB_EVENT,
+  OTOOLS_HOST_RELOAD_PLUGINS_EVENT,
+  OTOOLS_HOST_SWITCH_TAB_EVENT,
+  type OtoolsHostCloseTabDetail,
+  type OtoolsHostCreateTabDetail,
+  type OtoolsHostSwitchTabDetail,
+  type OtoolsHostWindowState,
+} from "@/lib/otools/host-events"
 import { cn } from "@/lib/utils"
 import {
   getBuiltinHomeTargets,
@@ -33,14 +45,64 @@ import {
 import type { OtoolsHostInfo, OtoolsPluginInfo } from "@/lib/otools/types"
 import { OtoolsPluginFrame } from "./otools-plugin-frame"
 
-type ShellView = { kind: "home" } | { kind: "plugin"; pluginId: string }
+type HomeTab = {
+  id: "home"
+  kind: "home"
+  title: string
+}
 
-const HOME_VIEW: ShellView = { kind: "home" }
+type PluginTab = {
+  id: string
+  kind: "plugin"
+  title: string
+  pluginId: string
+  windowLabel: string
+}
+
+type ExternalTab = {
+  id: string
+  kind: "external"
+  title: string
+  url: string
+  windowLabel: string
+  pluginId?: string | null
+}
+
+type ShellTab = HomeTab | PluginTab | ExternalTab
+
+const HOME_TAB: HomeTab = {
+  id: "home",
+  kind: "home",
+  title: "首页",
+}
+
+function buildPluginWindowLabel(plugin: OtoolsPluginInfo): string {
+  return `tools-tab-plugin-${plugin.uuid}`
+}
+
+function buildPluginTab(
+  plugin: OtoolsPluginInfo,
+  options?: {
+    title?: string | null
+    windowLabel?: string | null
+  }
+): PluginTab {
+  return {
+    id: `plugin:${plugin.uuid}`,
+    kind: "plugin",
+    title: String(options?.title || "").trim() || displayName(plugin),
+    pluginId: plugin.uuid,
+    windowLabel:
+      String(options?.windowLabel || "").trim() ||
+      buildPluginWindowLabel(plugin),
+  }
+}
 
 export function OtoolsShell() {
   const [plugins, setPlugins] = useState<OtoolsPluginInfo[]>([])
   const [hostInfo, setHostInfo] = useState<OtoolsHostInfo | null>(null)
-  const [view, setView] = useState<ShellView>(HOME_VIEW)
+  const [tabs, setTabs] = useState<ShellTab[]>([HOME_TAB])
+  const [activeTabId, setActiveTabId] = useState<string>(HOME_TAB.id)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [marketQuery, setMarketQuery] = useState("")
@@ -66,10 +128,21 @@ export function OtoolsShell() {
     void loadPlugins()
   }, [loadPlugins])
 
+  const activeTab = useMemo(
+    () => tabs.find((tab) => tab.id === activeTabId) ?? HOME_TAB,
+    [activeTabId, tabs]
+  )
   const activePlugin = useMemo(() => {
-    if (view.kind !== "plugin") return null
-    return plugins.find((plugin) => plugin.uuid === view.pluginId) ?? null
-  }, [plugins, view])
+    if (activeTab.kind !== "plugin") return null
+    return plugins.find((plugin) => plugin.uuid === activeTab.pluginId) ?? null
+  }, [activeTab, plugins])
+  const activeSidebarPluginId =
+    activeTab.kind === "plugin"
+      ? activeTab.pluginId
+      : activeTab.kind === "external"
+        ? (activeTab.pluginId ?? null)
+        : null
+
   const builtinHomeTargets = useMemo(
     () => getBuiltinHomeTargets(plugins),
     [plugins]
@@ -89,9 +162,153 @@ export function OtoolsShell() {
     [plugins]
   )
 
-  const openPlugin = useCallback((plugin: OtoolsPluginInfo) => {
-    setView({ kind: "plugin", pluginId: plugin.uuid })
+  useEffect(() => {
+    const handleReload = () => {
+      void loadPlugins()
+    }
+
+    window.addEventListener(OTOOLS_HOST_RELOAD_PLUGINS_EVENT, handleReload)
+    return () =>
+      window.removeEventListener(OTOOLS_HOST_RELOAD_PLUGINS_EVENT, handleReload)
+  }, [loadPlugins])
+
+  useEffect(() => {
+    const state: OtoolsHostWindowState = {
+      tabLabels: tabs
+        .filter((tab): tab is PluginTab | ExternalTab => tab.kind !== "home")
+        .map((tab) => tab.windowLabel),
+      activeLabel: activeTab.kind === "home" ? null : activeTab.windowLabel,
+    }
+
+    ;(
+      window as Window & {
+        __CODEG_OTOOLS_HOST_STATE__?: OtoolsHostWindowState
+      }
+    ).__CODEG_OTOOLS_HOST_STATE__ = state
+  }, [activeTab, tabs])
+
+  const closeTab = useCallback((tabId: string) => {
+    setTabs((currentTabs) => {
+      const targetIndex = currentTabs.findIndex((tab) => tab.id === tabId)
+      if (targetIndex <= 0) {
+        return currentTabs
+      }
+
+      const nextTabs = currentTabs.filter((tab) => tab.id !== tabId)
+      const fallback =
+        nextTabs[targetIndex - 1] ?? nextTabs[targetIndex] ?? HOME_TAB
+      setActiveTabId((currentActive) =>
+        currentActive === tabId ? fallback.id : currentActive
+      )
+      return nextTabs.length ? nextTabs : [HOME_TAB]
+    })
   }, [])
+
+  const openPlugin = useCallback((plugin: OtoolsPluginInfo) => {
+    const nextTab = buildPluginTab(plugin)
+    setTabs((currentTabs) => {
+      const existingIndex = currentTabs.findIndex(
+        (tab) => tab.kind !== "home" && tab.windowLabel === nextTab.windowLabel
+      )
+      if (existingIndex >= 0) {
+        const nextTabs = [...currentTabs]
+        nextTabs[existingIndex] = nextTab
+        return nextTabs
+      }
+      return [...currentTabs, nextTab]
+    })
+    setActiveTabId(nextTab.id)
+  }, [])
+
+  const openHostManagedTab = useCallback(
+    (detail: OtoolsHostCreateTabDetail) => {
+      const label = String(detail.label || "").trim()
+      if (!label) return
+
+      const pluginUuid = String(detail.pluginUuid || "").trim()
+      const plugin =
+        plugins.find(
+          (item) => item.uuid === pluginUuid || item.packid === pluginUuid
+        ) ?? null
+
+      const nextTab: ShellTab | null = plugin
+        ? buildPluginTab(plugin, {
+            title: detail.title,
+            windowLabel: label,
+          })
+        : String(detail.url || "").trim()
+          ? {
+              id: `external:${label}`,
+              kind: "external",
+              title: String(detail.title || "").trim() || label,
+              url: String(detail.url || "").trim(),
+              windowLabel: label,
+              pluginId: pluginUuid || null,
+            }
+          : null
+
+      if (!nextTab) return
+
+      setTabs((currentTabs) => {
+        const existingIndex = currentTabs.findIndex(
+          (tab) => tab.kind !== "home" && tab.windowLabel === label
+        )
+        if (existingIndex >= 0) {
+          const nextTabs = [...currentTabs]
+          nextTabs[existingIndex] = nextTab
+          return nextTabs
+        }
+        return [...currentTabs, nextTab]
+      })
+      setActiveTabId(nextTab.id)
+    },
+    [plugins]
+  )
+
+  useEffect(() => {
+    const handleCreate = (event: Event) => {
+      const detail = (event as CustomEvent<OtoolsHostCreateTabDetail>).detail
+      if (detail) {
+        openHostManagedTab(detail)
+      }
+    }
+
+    const handleClose = (event: Event) => {
+      const detail = (event as CustomEvent<OtoolsHostCloseTabDetail>).detail
+      const label = String(detail?.label || "").trim()
+      if (!label) return
+      const target = tabs.find(
+        (tab) => tab.kind !== "home" && tab.windowLabel === label
+      )
+      if (target) {
+        closeTab(target.id)
+      }
+    }
+
+    const handleSwitch = (event: Event) => {
+      const detail = (event as CustomEvent<OtoolsHostSwitchTabDetail>).detail
+      const activeLabel = String(detail?.activeLabel || "").trim()
+      if (!activeLabel) {
+        setActiveTabId(HOME_TAB.id)
+        return
+      }
+      const target = tabs.find(
+        (tab) => tab.kind !== "home" && tab.windowLabel === activeLabel
+      )
+      if (target) {
+        setActiveTabId(target.id)
+      }
+    }
+
+    window.addEventListener(OTOOLS_HOST_CREATE_TAB_EVENT, handleCreate)
+    window.addEventListener(OTOOLS_HOST_CLOSE_TAB_EVENT, handleClose)
+    window.addEventListener(OTOOLS_HOST_SWITCH_TAB_EVENT, handleSwitch)
+    return () => {
+      window.removeEventListener(OTOOLS_HOST_CREATE_TAB_EVENT, handleCreate)
+      window.removeEventListener(OTOOLS_HOST_CLOSE_TAB_EVENT, handleClose)
+      window.removeEventListener(OTOOLS_HOST_SWITCH_TAB_EVENT, handleSwitch)
+    }
+  }, [closeTab, openHostManagedTab, tabs])
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden">
@@ -115,10 +332,10 @@ export function OtoolsShell() {
         <div className="min-h-0 flex-1 overflow-auto p-2">
           <div className="space-y-1">
             <ShellNavButton
-              active={view.kind === "home"}
+              active={activeTab.kind === "home"}
               icon={<Home className="h-4 w-4" />}
               label="首页"
-              onClick={() => setView(HOME_VIEW)}
+              onClick={() => setActiveTabId(HOME_TAB.id)}
             />
           </div>
 
@@ -132,7 +349,7 @@ export function OtoolsShell() {
 
           {!loading && plugins.length === 0 ? (
             <div className="mb-2 rounded-md border bg-card p-3 text-sm text-muted-foreground">
-              No OTools plugins found. Set CODEG_OTOOLS_PLUGIN_DIR or copy
+              No OTools plugins found. Set `CODEG_OTOOLS_PLUGIN_DIR` or copy
               plugins into the codeg data directory.
             </div>
           ) : null}
@@ -147,8 +364,7 @@ export function OtoolsShell() {
                 type="button"
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
-                  view.kind === "plugin" &&
-                    view.pluginId === plugin.uuid &&
+                  activeSidebarPluginId === plugin.uuid &&
                     "bg-accent text-accent-foreground"
                 )}
                 onClick={() => openPlugin(plugin)}
@@ -169,7 +385,56 @@ export function OtoolsShell() {
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col">
-        {view.kind === "home" ? (
+        <div className="flex h-11 items-center gap-2 border-b px-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0"
+            onClick={() => setActiveTabId(HOME_TAB.id)}
+            title="Back to home"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="flex min-w-0 flex-1 gap-2 overflow-auto">
+            {tabs.map((tab) => {
+              const active = tab.id === activeTabId
+              const closable = tab.kind !== "home"
+              return (
+                <div
+                  key={tab.id}
+                  className={cn(
+                    "flex max-w-72 shrink-0 items-center gap-1 rounded-md border bg-background px-1",
+                    active && "bg-accent text-accent-foreground"
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate px-2 py-1.5 text-left text-sm"
+                    onClick={() => setActiveTabId(tab.id)}
+                    title={tab.title}
+                  >
+                    <span className="truncate">{tab.title}</span>
+                  </button>
+                  {tab.kind === "external" ? (
+                    <ExternalLink className="mr-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  ) : null}
+                  {closable ? (
+                    <button
+                      type="button"
+                      className="mr-1 shrink-0 rounded-sm p-1 hover:bg-background/60"
+                      onClick={() => closeTab(tab.id)}
+                      aria-label={`Close ${tab.title}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {activeTab.kind === "home" ? (
           <OtoolsHomeView
             devCount={devCount}
             loading={loading}
@@ -185,7 +450,7 @@ export function OtoolsShell() {
           />
         ) : null}
 
-        {view.kind === "plugin" ? (
+        {activeTab.kind === "plugin" ? (
           activePlugin ? (
             <OtoolsPluginView
               hostInfo={hostInfo}
@@ -204,6 +469,10 @@ export function OtoolsShell() {
               description="The selected plugin is no longer in the host catalog."
             />
           )
+        ) : null}
+
+        {activeTab.kind === "external" ? (
+          <OtoolsExternalView tab={activeTab} />
         ) : null}
       </section>
     </div>
@@ -389,6 +658,43 @@ function OtoolsPluginView({
         </Button>
       </div>
       <OtoolsPluginFrame plugin={plugin} />
+    </>
+  )
+}
+
+function OtoolsExternalView({ tab }: { tab: ExternalTab }) {
+  return (
+    <>
+      <div className="flex h-11 items-center justify-between border-b px-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium">{tab.title}</div>
+          <div className="truncate text-xs text-muted-foreground">
+            {tab.url}
+          </div>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => window.open(tab.url, "_blank")}
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open
+        </Button>
+      </div>
+      {tab.url ? (
+        <iframe
+          src={tab.url}
+          title={tab.title}
+          className="min-h-0 flex-1 border-0 bg-background"
+          sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+        />
+      ) : (
+        <EmptyState
+          icon={<ExternalLink className="h-8 w-8" />}
+          title="Tab unavailable"
+          description="The requested OTools tab does not include a valid URL."
+        />
+      )}
     </>
   )
 }

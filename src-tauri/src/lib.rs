@@ -948,6 +948,13 @@ mod tauri_app {
                 windows::open_project_boot_window,
                 otools_commands::open_otools_window,
                 otools_commands::otools_list_plugins,
+                otools_commands::otools_get_all_plugins,
+                otools_commands::otools_reload_all_plugins,
+                otools_commands::bridge_ping,
+                #[cfg(feature = "tauri-runtime")]
+                otools_commands::otools_show_main_window,
+                otools_commands::project_editor_open,
+                otools_commands::project_runner_open_in_terminal,
                 otools_commands::otools_host_info,
                 otools_commands::otools_get_plugin,
                 otools_commands::otools_plugin_state_get,
