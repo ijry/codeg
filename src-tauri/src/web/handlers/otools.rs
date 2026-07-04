@@ -70,6 +70,12 @@ pub struct SaveAiChatHistoryParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiGenerateTextParams {
+    pub request: otools::OtoolsAiGenerateTextRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ShellShortcutParams {
     pub action: String,
 }
@@ -328,6 +334,12 @@ pub async fn project_runner_open_in_terminal(
     Ok(Json(()))
 }
 
+pub async fn project_runner_read_scripts(
+    Json(params): Json<ProjectRunnerOpenInTerminalParams>,
+) -> Result<Json<otools::ProjectScriptsResponse>, AppCommandError> {
+    Ok(Json(otools::project_runner_read_scripts(params.working_dir).await?))
+}
+
 pub async fn otools_host_info() -> Result<Json<otools::OtoolsHostInfo>, AppCommandError> {
     Ok(Json(otools::otools_host_info().await?))
 }
@@ -389,6 +401,12 @@ pub async fn otools_ai_load_chat_history(
     Json(params): Json<PrefixParams>,
 ) -> Result<Json<Vec<otools::OtoolsAiChatMessageRecord>>, AppCommandError> {
     Ok(Json(otools::otools_ai_load_chat_history(params.prefix).await?))
+}
+
+pub async fn otools_ai_generate_text(
+    Json(params): Json<AiGenerateTextParams>,
+) -> Result<Json<String>, AppCommandError> {
+    Ok(Json(otools::otools_ai_generate_text(params.request).await?))
 }
 
 pub async fn otools_ai_save_chat_history(

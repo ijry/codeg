@@ -7,9 +7,10 @@ use crate::app_error::{AppCommandError, AppErrorCode};
 pub use otools_host::{
     DevBindDirectoryInput, DevNativeBuildJobSnapshot, DevNativeBuildJobStart, DevNativeConfig,
     DevPluginActionResult, DevPluginInput, DevPluginUpdateInput, DevPublishVersionInput,
-    DevWorkspace, OtoolsAiChatMessageRecord, OtoolsAssetPayload, OtoolsConfig, OtoolsConfigTab,
-    OtoolsHostInfo, OtoolsNativeInvokeRequest, OtoolsNavigationResult, OtoolsPluginInfo,
-    ParkInstallInput, ParkInstallResult, ParkUninstallInput, ParkUninstallResult, ParkWorkspace,
+    DevWorkspace, OtoolsAiChatMessageRecord, OtoolsAiGenerateTextRequest, OtoolsAssetPayload,
+    OtoolsConfig, OtoolsConfigTab, OtoolsHostInfo, OtoolsNativeInvokeRequest,
+    OtoolsNavigationResult, OtoolsPluginInfo, ParkInstallInput, ParkInstallResult,
+    ParkUninstallInput, ParkUninstallResult, ParkWorkspace, ProjectScriptsResponse,
     WebviewDirEntry, WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
 };
 
@@ -163,6 +164,15 @@ pub async fn project_runner_open_in_terminal(
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn project_runner_read_scripts(
+    working_dir: Option<String>,
+) -> Result<ProjectScriptsResponse, AppCommandError> {
+    otools_host::project_runner_read_scripts(working_dir)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_host_info() -> Result<OtoolsHostInfo, AppCommandError> {
     otools_host::otools_host_info()
         .await
@@ -231,6 +241,15 @@ pub async fn get_otools_config_value(key: String) -> Result<Option<Value>, AppCo
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn save_otools_config_value(key: String, value: Value) -> Result<(), AppCommandError> {
     otools_host::save_otools_config_value(key, value)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_ai_generate_text(
+    request: OtoolsAiGenerateTextRequest,
+) -> Result<String, AppCommandError> {
+    otools_host::otools_ai_generate_text(request)
         .await
         .map_err(map_host_error)
 }

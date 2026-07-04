@@ -285,6 +285,10 @@ pub fn build_router(
             post(handlers::otools::project_runner_open_in_terminal),
         )
         .route(
+            "/project_runner_read_scripts",
+            post(handlers::otools::project_runner_read_scripts),
+        )
+        .route(
             "/otools_host_info",
             post(handlers::otools::otools_host_info),
         )
@@ -323,6 +327,10 @@ pub fn build_router(
         .route(
             "/otools_ai_load_chat_history",
             post(handlers::otools::otools_ai_load_chat_history),
+        )
+        .route(
+            "/otools_ai_generate_text",
+            post(handlers::otools::otools_ai_generate_text),
         )
         .route(
             "/otools_ai_save_chat_history",

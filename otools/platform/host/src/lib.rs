@@ -61,6 +61,22 @@ pub struct WebviewRenameEntryRequest {
     pub from: String,
     pub to: String,
 }
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectScriptInfo {
+    pub name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectScriptsResponse {
+    pub has_package_json: bool,
+    pub package_manager: String,
+    pub command_prefix: String,
+    pub scripts: Vec<ProjectScriptInfo>,
+}
 pub async fn tools_webview_read_file(path: String) -> Result<WebviewReadFilePayload, HostError> {
     let target = PathBuf::from(require_non_empty(path, "path")?);
     let meta = build_file_meta(&target)?;
@@ -180,6 +196,40 @@ pub async fn tools_webview_log(message: String) -> Result<(), HostError> {
         eprintln!("[OTools][WebviewFS] {text}");
     }
     Ok(())
+}
+
+pub async fn project_runner_read_scripts(
+    working_dir: Option<String>,
+) -> Result<ProjectScriptsResponse, HostError> {
+    let Some(raw_working_dir) = working_dir
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(empty_project_scripts_response());
+    };
+
+    let working_dir = PathBuf::from(&raw_working_dir);
+    let package_json_path = working_dir.join("package.json");
+    if !package_json_path.is_file() {
+        return Ok(empty_project_scripts_response());
+    }
+
+    let content = std::fs::read_to_string(&package_json_path).map_err(HostError::io)?;
+    let package_json: Value = serde_json::from_str(&content).map_err(|error| {
+        HostError::configuration_invalid("Invalid package.json")
+            .with_detail(format!("{}: {error}", package_json_path.display()))
+    })?;
+
+    let scripts = parse_package_scripts(&package_json);
+    let (package_manager, command_prefix) =
+        detect_project_package_manager(&working_dir, &package_json);
+
+    Ok(ProjectScriptsResponse {
+        has_package_json: true,
+        package_manager: package_manager.to_string(),
+        command_prefix: command_prefix.to_string(),
+        scripts,
+    })
 }
 
 pub async fn otools_set_status_bar_state(payload: Value) -> Result<Value, HostError> {
@@ -474,6 +524,75 @@ fn require_non_empty(value: String, name: &str) -> Result<String, HostError> {
         return Err(HostError::invalid_input(format!("{name} is required")));
     }
     Ok(trimmed.to_string())
+}
+
+fn empty_project_scripts_response() -> ProjectScriptsResponse {
+    ProjectScriptsResponse {
+        has_package_json: false,
+        package_manager: "npm".to_string(),
+        command_prefix: "npm run ".to_string(),
+        scripts: Vec::new(),
+    }
+}
+
+fn detect_project_package_manager(
+    working_dir: &Path,
+    package_json: &Value,
+) -> (&'static str, &'static str) {
+    if let Some(package_manager) = package_json
+        .get("packageManager")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if package_manager.starts_with("pnpm@") {
+            return ("pnpm", "pnpm run ");
+        }
+        if package_manager.starts_with("yarn@") {
+            return ("yarn", "yarn ");
+        }
+        if package_manager.starts_with("bun@") {
+            return ("bun", "bun run ");
+        }
+        if package_manager.starts_with("npm@") {
+            return ("npm", "npm run ");
+        }
+    }
+
+    if working_dir.join("pnpm-lock.yaml").is_file() {
+        return ("pnpm", "pnpm run ");
+    }
+    if working_dir.join("yarn.lock").is_file() {
+        return ("yarn", "yarn ");
+    }
+    if working_dir.join("package-lock.json").is_file() {
+        return ("npm", "npm run ");
+    }
+    if working_dir.join("bun.lockb").is_file() || working_dir.join("bun.lock").is_file() {
+        return ("bun", "bun run ");
+    }
+
+    ("npm", "npm run ")
+}
+
+fn parse_package_scripts(package_json: &Value) -> Vec<ProjectScriptInfo> {
+    let Some(object) = package_json.get("scripts").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+
+    let sorted: std::collections::BTreeMap<String, String> = object
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .as_str()
+                .map(|command| (name.to_string(), command.to_string()))
+        })
+        .collect();
+
+    sorted
+        .into_iter()
+        .map(|(name, command)| ProjectScriptInfo { name, command })
+        .collect()
 }
 
 fn build_file_meta(path: &Path) -> Result<WebviewFileMeta, HostError> {
