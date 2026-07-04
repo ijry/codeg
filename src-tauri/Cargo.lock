@@ -4422,6 +4422,7 @@ name = "otools-host"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "otools-core",
  "otools-platform-host",
  "otools-plugin-config",
@@ -4429,6 +4430,7 @@ dependencies = [
  "otools-plugin-park",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

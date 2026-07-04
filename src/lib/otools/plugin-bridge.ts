@@ -35,9 +35,11 @@ import {
   OTOOLS_HOST_CLOSE_TAB_EVENT,
   OTOOLS_HOST_CREATE_TAB_EVENT,
   OTOOLS_HOST_RELOAD_PLUGINS_EVENT,
+  OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
   OTOOLS_HOST_SWITCH_TAB_EVENT,
   type OtoolsHostCloseTabDetail,
   type OtoolsHostCreateTabDetail,
+  type OtoolsHostShellShortcutDetail,
   type OtoolsHostSwitchTabDetail,
   type OtoolsHostWindowState,
 } from "./host-events"
@@ -684,6 +686,35 @@ async function dispatchOtoolsCommand(
 
   if (CONFIG_COMMANDS.has(command)) {
     return dispatchConfigCommand(command, payload)
+  }
+
+  if (command === "otools_ai_load_chat_history") {
+    return getTransport().call(command, {
+      prefix: readStringField(payload, "prefix"),
+    })
+  }
+
+  if (command === "otools_ai_save_chat_history") {
+    return getTransport().call(command, {
+      prefix: readStringField(payload, "prefix"),
+      messages: readArrayField(payload, "messages"),
+    })
+  }
+
+  if (command === "otools_emit_tools_shell_shortcut") {
+    const action = normalizeToolsShellShortcutAction(
+      readStringField(payload, "action")
+    )
+    if (!action) {
+      throw new Error("Unsupported tools shell shortcut action")
+    }
+    dispatchHostCustomEvent<OtoolsHostShellShortcutDetail>(
+      OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
+      {
+        action,
+      }
+    )
+    return true
   }
 
   if (OPEN_EXTERNAL_COMMANDS.has(command)) {
@@ -1975,6 +2006,28 @@ function readStringArrayField(payload: unknown, field: string): string[] {
   return value
     .map((item) => (typeof item === "string" ? item.trim() : ""))
     .filter(Boolean)
+}
+
+function readArrayField(payload: unknown, field: string): unknown[] {
+  const record = asRecord(payload)
+  const direct = record?.[field]
+  if (Array.isArray(direct)) {
+    return direct
+  }
+  return Array.isArray(payload) ? payload : []
+}
+
+function normalizeToolsShellShortcutAction(
+  value: string
+): OtoolsHostShellShortcutDetail["action"] | null {
+  switch (value.trim()) {
+    case "closeActiveTab":
+    case "activatePrevTab":
+    case "activateNextTab":
+      return value.trim()
+    default:
+      return null
+  }
 }
 
 function extractDialogOpenOptions(payload: unknown): {

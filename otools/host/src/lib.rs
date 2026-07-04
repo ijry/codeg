@@ -1,3 +1,4 @@
+use chrono::Utc;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -90,6 +91,30 @@ pub struct OtoolsHostInfo {
     pub platform: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OtoolsAiChatMessageRecord {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct OtoolsAiChatHistoryFile {
+    pub prefix: String,
+    pub updated_at: String,
+    pub messages: Vec<OtoolsAiChatMessageRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum OtoolsAiChatHistoryStored {
+    Messages(Vec<OtoolsAiChatMessageRecord>),
+    File(OtoolsAiChatHistoryFile),
+}
+
 pub fn open_otools_window_core() -> OtoolsNavigationResult {
     OtoolsNavigationResult {
         path: "/otools".to_string(),
@@ -172,6 +197,30 @@ pub async fn otools_get_plugin_asset(
         data_base64: BASE64_STANDARD.encode(bytes),
         text,
     })
+}
+
+pub async fn otools_ai_load_chat_history(
+    prefix: String,
+) -> Result<Vec<OtoolsAiChatMessageRecord>, HostError> {
+    load_chat_history_messages(&prefix)
+}
+
+pub async fn otools_ai_save_chat_history(
+    prefix: String,
+    messages: Vec<OtoolsAiChatMessageRecord>,
+) -> Result<(), HostError> {
+    let path = resolve_chat_history_path(&prefix)?;
+    let payload = OtoolsAiChatHistoryFile {
+        prefix: prefix.trim().to_string(),
+        updated_at: Utc::now().to_rfc3339(),
+        messages: normalize_chat_messages(messages),
+    };
+    catalog::write_json_file(&path, &payload)
+}
+
+pub async fn otools_emit_tools_shell_shortcut(action: String) -> Result<(), HostError> {
+    validate_tools_shell_shortcut_action(&action)?;
+    Ok(())
 }
 
 pub async fn dev_get_workspace() -> Result<DevWorkspace, HostError> {
@@ -463,6 +512,17 @@ pub fn validate_plugin_id_for_host(value: &str) -> Result<String, HostError> {
     validate_plugin_id(value)
 }
 
+pub fn validate_tools_shell_shortcut_action(value: &str) -> Result<String, HostError> {
+    match value.trim() {
+        "closeActiveTab" | "activatePrevTab" | "activateNextTab" => {
+            Ok(value.trim().to_string())
+        }
+        _ => Err(HostError::invalid_input(
+            "Unsupported tools shell shortcut action",
+        )),
+    }
+}
+
 fn validate_state_scheme(value: &str) -> Result<String, HostError> {
     match value {
         "local" | "sync" => Ok(value.to_string()),
@@ -487,6 +547,115 @@ fn sanitize_relative_path(value: &str) -> Result<PathBuf, HostError> {
         return Err(HostError::invalid_input("Invalid OTools asset path"));
     }
     Ok(clean)
+}
+
+fn resolve_chat_history_path(prefix: &str) -> Result<PathBuf, HostError> {
+    let native_id = get_or_create_otools_native_id()?;
+    let normalized_prefix = normalize_chat_prefix(prefix)?;
+    Ok(catalog::otools_root_dir()
+        .join("ai")
+        .join("chat")
+        .join(native_id)
+        .join(format!("{normalized_prefix}.json")))
+}
+
+fn get_or_create_otools_native_id() -> Result<String, HostError> {
+    let path = catalog::otools_root_dir().join("runtime").join("native_id.txt");
+    if path.exists() {
+        let value = fs::read_to_string(&path).map_err(HostError::io)?;
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let value = uuid::Uuid::new_v4().to_string();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(HostError::io)?;
+    }
+    fs::write(&path, &value).map_err(HostError::io)?;
+    Ok(value)
+}
+
+fn normalize_chat_prefix(prefix: &str) -> Result<String, HostError> {
+    let trimmed = prefix.trim();
+    if trimmed.is_empty() {
+        return Err(HostError::invalid_input("Chat history prefix is required"));
+    }
+
+    let normalized = trimmed
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+
+    if normalized.is_empty() {
+        return Err(HostError::invalid_input(
+            "Chat history prefix does not contain valid characters",
+        ));
+    }
+
+    Ok(normalized)
+}
+
+fn normalize_chat_messages(
+    messages: Vec<OtoolsAiChatMessageRecord>,
+) -> Vec<OtoolsAiChatMessageRecord> {
+    messages
+        .into_iter()
+        .filter_map(|message| {
+            let content = message.content.trim().to_string();
+            if content.is_empty() {
+                return None;
+            }
+
+            let role = match message.role.trim() {
+                "user" => "user",
+                _ => "assistant",
+            }
+            .to_string();
+
+            let created_at = if message.created_at.trim().is_empty() {
+                Utc::now().to_rfc3339()
+            } else {
+                message.created_at
+            };
+
+            let id = if message.id.trim().is_empty() {
+                format!("{created_at}_{}", uuid::Uuid::new_v4())
+            } else {
+                message.id
+            };
+
+            Some(OtoolsAiChatMessageRecord {
+                id,
+                role,
+                content,
+                created_at,
+            })
+        })
+        .collect()
+}
+
+fn load_chat_history_messages(prefix: &str) -> Result<Vec<OtoolsAiChatMessageRecord>, HostError> {
+    let path = resolve_chat_history_path(prefix)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let stored = catalog::read_json_file::<OtoolsAiChatHistoryStored>(&path)?;
+    let messages = match stored {
+        OtoolsAiChatHistoryStored::Messages(messages) => messages,
+        OtoolsAiChatHistoryStored::File(payload) => payload.messages,
+    };
+    Ok(normalize_chat_messages(messages))
 }
 
 fn guess_mime(path: &Path) -> &'static str {

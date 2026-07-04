@@ -13,6 +13,7 @@ import type {
   DevPluginActionResult,
   DevPluginInput,
   DevPublishVersionInput,
+  OtoolsAiChatMessage,
   DevWorkspace,
   OtoolsAssetPayload,
   OtoolsConfig,
@@ -107,6 +108,28 @@ export async function saveOtoolsConfigValue(
   value: unknown
 ): Promise<void> {
   return getTransport().call("save_otools_config_value", { key, value })
+}
+
+export async function loadOtoolsAiChatHistory(
+  prefix: string
+): Promise<OtoolsAiChatMessage[]> {
+  return getTransport().call("otools_ai_load_chat_history", { prefix })
+}
+
+export async function saveOtoolsAiChatHistory(
+  prefix: string,
+  messages: OtoolsAiChatMessage[]
+): Promise<void> {
+  return getTransport().call("otools_ai_save_chat_history", {
+    prefix,
+    messages,
+  })
+}
+
+export async function emitOtoolsShellShortcut(
+  action: "closeActiveTab" | "activatePrevTab" | "activateNextTab"
+): Promise<void> {
+  return getTransport().call("otools_emit_tools_shell_shortcut", { action })
 }
 
 export async function invokeOtoolsNative<T = unknown>(

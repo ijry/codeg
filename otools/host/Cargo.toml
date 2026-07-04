@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 base64 = "0.22"
+chrono = { version = "0.4", features = ["clock"] }
 otools-core = { path = "../core" }
 otools-platform-host = { path = "../platform/host" }
 otools-plugin-config = { path = "../plugins/config/host" }
@@ -12,3 +13,4 @@ otools-plugin-dev = { path = "../plugins/dev/host" }
 otools-plugin-park = { path = "../plugins/park/host" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+uuid = { version = "1", features = ["v4"] }

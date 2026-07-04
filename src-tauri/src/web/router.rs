@@ -321,6 +321,18 @@ pub fn build_router(
             post(handlers::otools::save_otools_config_value),
         )
         .route(
+            "/otools_ai_load_chat_history",
+            post(handlers::otools::otools_ai_load_chat_history),
+        )
+        .route(
+            "/otools_ai_save_chat_history",
+            post(handlers::otools::otools_ai_save_chat_history),
+        )
+        .route(
+            "/otools_emit_tools_shell_shortcut",
+            post(handlers::otools::otools_emit_tools_shell_shortcut),
+        )
+        .route(
             "/otools_native_invoke",
             post(handlers::otools::otools_native_invoke),
         )

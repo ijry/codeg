@@ -7,10 +7,10 @@ use crate::app_error::{AppCommandError, AppErrorCode};
 pub use otools_host::{
     DevBindDirectoryInput, DevNativeBuildJobSnapshot, DevNativeBuildJobStart, DevNativeConfig,
     DevPluginActionResult, DevPluginInput, DevPluginUpdateInput, DevPublishVersionInput,
-    DevWorkspace, OtoolsAssetPayload, OtoolsConfig, OtoolsConfigTab, OtoolsHostInfo,
-    OtoolsNativeInvokeRequest, OtoolsNavigationResult, OtoolsPluginInfo, ParkInstallInput,
-    ParkInstallResult, ParkUninstallInput, ParkUninstallResult, ParkWorkspace, WebviewDirEntry,
-    WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
+    DevWorkspace, OtoolsAiChatMessageRecord, OtoolsAssetPayload, OtoolsConfig, OtoolsConfigTab,
+    OtoolsHostInfo, OtoolsNativeInvokeRequest, OtoolsNavigationResult, OtoolsPluginInfo,
+    ParkInstallInput, ParkInstallResult, ParkUninstallInput, ParkUninstallResult, ParkWorkspace,
+    WebviewDirEntry, WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
 };
 
 pub fn open_otools_window_core() -> OtoolsNavigationResult {
@@ -231,6 +231,32 @@ pub async fn get_otools_config_value(key: String) -> Result<Option<Value>, AppCo
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn save_otools_config_value(key: String, value: Value) -> Result<(), AppCommandError> {
     otools_host::save_otools_config_value(key, value)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_ai_load_chat_history(
+    prefix: String,
+) -> Result<Vec<OtoolsAiChatMessageRecord>, AppCommandError> {
+    otools_host::otools_ai_load_chat_history(prefix)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_ai_save_chat_history(
+    prefix: String,
+    messages: Vec<OtoolsAiChatMessageRecord>,
+) -> Result<(), AppCommandError> {
+    otools_host::otools_ai_save_chat_history(prefix, messages)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_emit_tools_shell_shortcut(action: String) -> Result<(), AppCommandError> {
+    otools_host::otools_emit_tools_shell_shortcut(action)
         .await
         .map_err(map_host_error)
 }

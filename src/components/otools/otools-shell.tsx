@@ -26,9 +26,12 @@ import {
   OTOOLS_HOST_CLOSE_TAB_EVENT,
   OTOOLS_HOST_CREATE_TAB_EVENT,
   OTOOLS_HOST_RELOAD_PLUGINS_EVENT,
+  OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
   OTOOLS_HOST_SWITCH_TAB_EVENT,
   type OtoolsHostCloseTabDetail,
   type OtoolsHostCreateTabDetail,
+  type OtoolsHostShellShortcutAction,
+  type OtoolsHostShellShortcutDetail,
   type OtoolsHostSwitchTabDetail,
   type OtoolsHostWindowState,
 } from "@/lib/otools/host-events"
@@ -204,6 +207,49 @@ export function OtoolsShell() {
     })
   }, [])
 
+  const closeActiveTab = useCallback(() => {
+    if (activeTabId === HOME_TAB.id) {
+      return
+    }
+    closeTab(activeTabId)
+  }, [activeTabId, closeTab])
+
+  const activateRelativeTab = useCallback(
+    (direction: "prev" | "next") => {
+      if (tabs.length <= 1) {
+        return
+      }
+
+      const currentIndex = tabs.findIndex((tab) => tab.id === activeTabId)
+      if (currentIndex < 0) {
+        setActiveTabId(HOME_TAB.id)
+        return
+      }
+
+      const delta = direction === "prev" ? -1 : 1
+      const nextIndex = (currentIndex + delta + tabs.length) % tabs.length
+      setActiveTabId(tabs[nextIndex]?.id ?? HOME_TAB.id)
+    },
+    [activeTabId, tabs]
+  )
+
+  const runShellShortcutAction = useCallback(
+    (action: OtoolsHostShellShortcutAction) => {
+      if (action === "closeActiveTab") {
+        closeActiveTab()
+        return
+      }
+      if (action === "activatePrevTab") {
+        activateRelativeTab("prev")
+        return
+      }
+      if (action === "activateNextTab") {
+        activateRelativeTab("next")
+      }
+    },
+    [activateRelativeTab, closeActiveTab]
+  )
+
   const openPlugin = useCallback((plugin: OtoolsPluginInfo) => {
     const nextTab = buildPluginTab(plugin)
     setTabs((currentTabs) => {
@@ -300,15 +346,32 @@ export function OtoolsShell() {
       }
     }
 
+    const handleShellShortcut = (event: Event) => {
+      const detail = (event as CustomEvent<OtoolsHostShellShortcutDetail>)
+        .detail
+      if (!detail?.action) {
+        return
+      }
+      runShellShortcutAction(detail.action)
+    }
+
     window.addEventListener(OTOOLS_HOST_CREATE_TAB_EVENT, handleCreate)
     window.addEventListener(OTOOLS_HOST_CLOSE_TAB_EVENT, handleClose)
     window.addEventListener(OTOOLS_HOST_SWITCH_TAB_EVENT, handleSwitch)
+    window.addEventListener(
+      OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
+      handleShellShortcut
+    )
     return () => {
       window.removeEventListener(OTOOLS_HOST_CREATE_TAB_EVENT, handleCreate)
       window.removeEventListener(OTOOLS_HOST_CLOSE_TAB_EVENT, handleClose)
       window.removeEventListener(OTOOLS_HOST_SWITCH_TAB_EVENT, handleSwitch)
+      window.removeEventListener(
+        OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
+        handleShellShortcut
+      )
     }
-  }, [closeTab, openHostManagedTab, tabs])
+  }, [closeTab, openHostManagedTab, runShellShortcutAction, tabs])
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden">

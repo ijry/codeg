@@ -57,6 +57,25 @@ pub struct ConfigValueSetParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PrefixParams {
+    pub prefix: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAiChatHistoryParams {
+    pub prefix: String,
+    pub messages: Vec<otools::OtoolsAiChatMessageRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellShortcutParams {
+    pub action: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveOtoolsConfigParams {
     pub config: otools::OtoolsConfig,
 }
@@ -363,6 +382,26 @@ pub async fn save_otools_config_value(
     Json(params): Json<ConfigValueSetParams>,
 ) -> Result<Json<()>, AppCommandError> {
     otools::save_otools_config_value(params.key, params.value).await?;
+    Ok(Json(()))
+}
+
+pub async fn otools_ai_load_chat_history(
+    Json(params): Json<PrefixParams>,
+) -> Result<Json<Vec<otools::OtoolsAiChatMessageRecord>>, AppCommandError> {
+    Ok(Json(otools::otools_ai_load_chat_history(params.prefix).await?))
+}
+
+pub async fn otools_ai_save_chat_history(
+    Json(params): Json<SaveAiChatHistoryParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_ai_save_chat_history(params.prefix, params.messages).await?;
+    Ok(Json(()))
+}
+
+pub async fn otools_emit_tools_shell_shortcut(
+    Json(params): Json<ShellShortcutParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_emit_tools_shell_shortcut(params.action).await?;
     Ok(Json(()))
 }
 

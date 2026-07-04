@@ -25,6 +25,13 @@ export interface OtoolsAssetPayload {
   text?: string | null
 }
 
+export interface OtoolsAiChatMessage {
+  id: string
+  role: string
+  content: string
+  createdAt: string
+}
+
 export interface OtoolsHostInfo {
   dataDir: string
   pluginRoots: string[]
