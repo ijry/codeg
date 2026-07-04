@@ -38,6 +38,18 @@ pub use otools_plugin_park::{
     ParkCatalogItem, ParkCategory, ParkInstallInput, ParkInstallResult, ParkReviewItem,
     ParkUninstallInput, ParkUninstallResult, ParkWorkspace,
 };
+pub use otools_plugin_state::{
+    get_otools_plugin_localstate, get_otools_plugin_localstate_value,
+    get_otools_plugin_localstate_value_with_scheme, get_otools_plugin_localstate_with_scheme,
+    get_otools_plugin_syncstate, get_otools_plugin_syncstate_value,
+    get_otools_plugin_syncstate_value_with_scheme, get_otools_plugin_syncstate_with_scheme,
+    patch_otools_plugin_localstate, patch_otools_plugin_localstate_with_scheme,
+    patch_otools_plugin_syncstate, patch_otools_plugin_syncstate_with_scheme,
+    save_otools_plugin_localstate, save_otools_plugin_localstate_value,
+    save_otools_plugin_localstate_value_with_scheme, save_otools_plugin_localstate_with_scheme,
+    save_otools_plugin_syncstate, save_otools_plugin_syncstate_value,
+    save_otools_plugin_syncstate_value_with_scheme, save_otools_plugin_syncstate_with_scheme,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,16 +143,8 @@ pub async fn otools_plugin_state_get(
     plugin_uuid: String,
     scheme: Option<String>,
 ) -> Result<Value, HostError> {
-    let plugin_uuid = validate_plugin_id(&plugin_uuid)?;
-    let path = state_path(&plugin_uuid, scheme.as_deref())?;
-    if !path.exists() {
-        return Ok(Value::Null);
-    }
-    let bytes = fs::read(&path).map_err(HostError::io)?;
-    serde_json::from_slice(&bytes).map_err(|error| {
-        HostError::configuration_invalid("Invalid OTools plugin state")
-            .with_detail(error.to_string())
-    })
+    validate_plugin_id(&plugin_uuid)?;
+    otools_plugin_state::otools_plugin_state_get(plugin_uuid, scheme)
 }
 
 pub async fn otools_plugin_state_set(
@@ -148,15 +152,8 @@ pub async fn otools_plugin_state_set(
     scheme: Option<String>,
     state: Value,
 ) -> Result<(), HostError> {
-    let plugin_uuid = validate_plugin_id(&plugin_uuid)?;
-    let path = state_path(&plugin_uuid, scheme.as_deref())?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(HostError::io)?;
-    }
-    let bytes = serde_json::to_vec_pretty(&state).map_err(|error| {
-        HostError::invalid_input("Invalid OTools plugin state").with_detail(error.to_string())
-    })?;
-    fs::write(path, bytes).map_err(HostError::io)
+    validate_plugin_id(&plugin_uuid)?;
+    otools_plugin_state::otools_plugin_state_set(plugin_uuid, scheme, state)
 }
 
 pub async fn otools_get_plugin_asset(
@@ -475,14 +472,6 @@ fn plugin_roots() -> Vec<PathBuf> {
     roots
 }
 
-fn state_path(plugin_uuid: &str, scheme: Option<&str>) -> Result<PathBuf, HostError> {
-    let scheme = validate_state_scheme(scheme.unwrap_or("local"))?;
-    Ok(catalog::state_dir()
-        .join(scheme)
-        .join(plugin_uuid)
-        .join("state.json"))
-}
-
 fn validate_plugin_id(value: &str) -> Result<String, HostError> {
     let trimmed = value.trim();
     if trimmed.is_empty()
@@ -508,13 +497,6 @@ pub fn validate_tools_shell_shortcut_action(value: &str) -> Result<String, HostE
         _ => Err(HostError::invalid_input(
             "Unsupported tools shell shortcut action",
         )),
-    }
-}
-
-fn validate_state_scheme(value: &str) -> Result<String, HostError> {
-    match value {
-        "local" | "sync" => Ok(value.to_string()),
-        _ => Err(HostError::invalid_input("Invalid OTools state scheme")),
     }
 }
 

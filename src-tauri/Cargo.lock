@@ -4619,6 +4619,7 @@ dependencies = [
  "otools-plugin-config",
  "otools-plugin-dev",
  "otools-plugin-park",
+ "otools-plugin-state",
  "serde",
  "serde_json",
 ]
@@ -4694,6 +4695,14 @@ dependencies = [
  "serde_json",
  "url",
  "zip 2.4.2",
+]
+
+[[package]]
+name = "otools-plugin-state"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "serde_json",
 ]
 
 [[package]]

@@ -284,6 +284,184 @@ pub async fn otools_plugin_state_set(
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_plugin_localstate(
+    plugin: String,
+) -> Result<Option<Value>, AppCommandError> {
+    otools_host::get_otools_plugin_localstate(plugin).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_plugin_localstate(
+    plugin: String,
+    state: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::save_otools_plugin_localstate(plugin, state).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_plugin_localstate_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+) -> Result<Option<Value>, AppCommandError> {
+    otools_host::get_otools_plugin_localstate_with_scheme(plugin, scheme).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_plugin_localstate_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+    state: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::save_otools_plugin_localstate_with_scheme(plugin, scheme, state)
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_plugin_syncstate(
+    plugin: String,
+) -> Result<Option<Value>, AppCommandError> {
+    otools_host::get_otools_plugin_syncstate(plugin).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_plugin_syncstate(
+    plugin: String,
+    state: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::save_otools_plugin_syncstate(plugin, state).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_plugin_syncstate_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+) -> Result<Option<Value>, AppCommandError> {
+    otools_host::get_otools_plugin_syncstate_with_scheme(plugin, scheme).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_plugin_syncstate_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+    state: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::save_otools_plugin_syncstate_with_scheme(plugin, scheme, state)
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_plugin_localstate_value(
+    plugin: String,
+    key: String,
+) -> Result<Option<Value>, AppCommandError> {
+    otools_host::get_otools_plugin_localstate_value(plugin, key).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_plugin_localstate_value(
+    plugin: String,
+    key: String,
+    value: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::save_otools_plugin_localstate_value(plugin, key, value).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn patch_otools_plugin_localstate(
+    plugin: String,
+    patch: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::patch_otools_plugin_localstate(plugin, patch).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_plugin_localstate_value_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+    key: String,
+) -> Result<Option<Value>, AppCommandError> {
+    otools_host::get_otools_plugin_localstate_value_with_scheme(plugin, scheme, key)
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_plugin_localstate_value_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+    key: String,
+    value: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::save_otools_plugin_localstate_value_with_scheme(plugin, scheme, key, value)
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn patch_otools_plugin_localstate_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+    patch: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::patch_otools_plugin_localstate_with_scheme(plugin, scheme, patch)
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_plugin_syncstate_value(
+    plugin: String,
+    key: String,
+) -> Result<Option<Value>, AppCommandError> {
+    otools_host::get_otools_plugin_syncstate_value(plugin, key).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_plugin_syncstate_value(
+    plugin: String,
+    key: String,
+    value: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::save_otools_plugin_syncstate_value(plugin, key, value).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn patch_otools_plugin_syncstate(
+    plugin: String,
+    patch: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::patch_otools_plugin_syncstate(plugin, patch).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_otools_plugin_syncstate_value_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+    key: String,
+) -> Result<Option<Value>, AppCommandError> {
+    otools_host::get_otools_plugin_syncstate_value_with_scheme(plugin, scheme, key)
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn save_otools_plugin_syncstate_value_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+    key: String,
+    value: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::save_otools_plugin_syncstate_value_with_scheme(plugin, scheme, key, value)
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn patch_otools_plugin_syncstate_with_scheme(
+    plugin: String,
+    scheme: Option<String>,
+    patch: Value,
+) -> Result<(), AppCommandError> {
+    otools_host::patch_otools_plugin_syncstate_with_scheme(plugin, scheme, patch)
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_get_plugin_asset(
     plugin_uuid: String,
     asset_path: String,

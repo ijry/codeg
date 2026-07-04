@@ -19,13 +19,11 @@ import {
   getOtoolsConfig,
   getOtoolsConfigValue,
   getOtoolsPluginAsset,
-  getOtoolsPluginState,
   invokeOtoolsNative,
   probeDevNativePlugin,
   reloadDevNativePlugin,
   saveOtoolsConfig,
   saveOtoolsConfigValue,
-  setOtoolsPluginState,
 } from "./api"
 import {
   normalizeConfigValueForSave,
@@ -639,50 +637,35 @@ async function dispatchOtoolsCommand(
   const targetPluginUuid = resolvePayloadPluginUuid(pluginUuid, payload)
 
   if (STATE_GET_COMMANDS.has(command)) {
-    return getOtoolsPluginState(targetPluginUuid, inferScheme(command, payload))
+    return getTransport().call(
+      command,
+      buildStateCommandPayload(targetPluginUuid, payload)
+    )
   }
   if (STATE_SET_COMMANDS.has(command)) {
-    return setOtoolsPluginState(
-      targetPluginUuid,
-      extractStatePayload(payload),
-      inferScheme(command, payload)
-    )
+    return getTransport().call(command, {
+      ...buildStateCommandPayload(targetPluginUuid, payload),
+      state: extractStatePayload(payload),
+    })
   }
   if (STATE_VALUE_GET_COMMANDS.has(command)) {
-    const state = (await getOtoolsPluginState(
-      targetPluginUuid,
-      inferScheme(command, payload)
-    )) as Record<string, unknown> | null
-    const key = extractKey(payload)
-    return state && key ? (state[key] ?? null) : null
+    return getTransport().call(command, {
+      ...buildStateCommandPayload(targetPluginUuid, payload),
+      key: extractKey(payload) ?? "",
+    })
   }
   if (STATE_VALUE_SET_COMMANDS.has(command)) {
-    const state = ((await getOtoolsPluginState(
-      targetPluginUuid,
-      inferScheme(command, payload)
-    )) ?? {}) as Record<string, unknown>
-    const key = extractKey(payload)
-    if (key) state[key] = extractValuePayload(payload)
-    return setOtoolsPluginState(
-      targetPluginUuid,
-      state,
-      inferScheme(command, payload)
-    )
+    return getTransport().call(command, {
+      ...buildStateCommandPayload(targetPluginUuid, payload),
+      key: extractKey(payload) ?? "",
+      value: extractValuePayload(payload),
+    })
   }
   if (STATE_PATCH_COMMANDS.has(command)) {
-    const current = ((await getOtoolsPluginState(
-      targetPluginUuid,
-      inferScheme(command, payload)
-    )) ?? {}) as Record<string, unknown>
-    const patch = (extractPatchPayload(payload) ?? {}) as Record<
-      string,
-      unknown
-    >
-    return setOtoolsPluginState(
-      targetPluginUuid,
-      { ...current, ...patch },
-      inferScheme(command, payload)
-    )
+    return getTransport().call(command, {
+      ...buildStateCommandPayload(targetPluginUuid, payload),
+      patch: extractPatchPayload(payload) ?? {},
+    })
   }
 
   if (HOST_FORWARD_PREFIXES.some((prefix) => command.startsWith(prefix))) {
@@ -1988,12 +1971,6 @@ function otoolsCompatBootstrap(config: {
   }
 }
 
-function inferScheme(command: string, payload: unknown): "local" | "sync" {
-  if (command.includes("syncstate")) return "sync"
-  const value = payload as { scheme?: string } | null
-  return value?.scheme === "sync" ? "sync" : "local"
-}
-
 function extractStatePayload(payload: unknown): unknown {
   const value = payload as { state?: unknown; value?: unknown } | null
   if (value && "state" in value) return value.state
@@ -2015,6 +1992,16 @@ function extractKey(payload: unknown): string | null {
 function extractValuePayload(payload: unknown): unknown {
   const value = payload as { value?: unknown } | null
   return value?.value
+}
+
+function buildStateCommandPayload(
+  pluginUuid: string,
+  payload: unknown
+): Record<string, unknown> {
+  return {
+    ...(asRecord(payload) ?? {}),
+    plugin: pluginUuid,
+  }
 }
 
 function resolvePayloadPluginUuid(fallback: string, payload: unknown): string {

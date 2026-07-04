@@ -44,6 +44,17 @@ pub struct PluginStateSetParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OtoolsPluginStateParams {
+    pub plugin: String,
+    pub scheme: Option<String>,
+    pub state: Option<Value>,
+    pub key: Option<String>,
+    pub value: Option<Value>,
+    pub patch: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigValueGetParams {
     pub key: String,
 }
@@ -375,12 +386,224 @@ pub async fn otools_plugin_state_set(
     Ok(Json(()))
 }
 
+pub async fn get_otools_plugin_localstate(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    Ok(Json(otools::get_otools_plugin_localstate(params.plugin).await?))
+}
+
+pub async fn save_otools_plugin_localstate(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_plugin_localstate(params.plugin, require_state(params.state)?).await?;
+    Ok(Json(()))
+}
+
+pub async fn get_otools_plugin_localstate_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    Ok(Json(
+        otools::get_otools_plugin_localstate_with_scheme(params.plugin, params.scheme).await?,
+    ))
+}
+
+pub async fn save_otools_plugin_localstate_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_plugin_localstate_with_scheme(
+        params.plugin,
+        params.scheme,
+        require_state(params.state)?,
+    )
+    .await?;
+    Ok(Json(()))
+}
+
+pub async fn get_otools_plugin_syncstate(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    Ok(Json(otools::get_otools_plugin_syncstate(params.plugin).await?))
+}
+
+pub async fn save_otools_plugin_syncstate(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_plugin_syncstate(params.plugin, require_state(params.state)?).await?;
+    Ok(Json(()))
+}
+
+pub async fn get_otools_plugin_syncstate_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    Ok(Json(
+        otools::get_otools_plugin_syncstate_with_scheme(params.plugin, params.scheme).await?,
+    ))
+}
+
+pub async fn save_otools_plugin_syncstate_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_plugin_syncstate_with_scheme(
+        params.plugin,
+        params.scheme,
+        require_state(params.state)?,
+    )
+    .await?;
+    Ok(Json(()))
+}
+
+pub async fn get_otools_plugin_localstate_value(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    Ok(Json(
+        otools::get_otools_plugin_localstate_value(params.plugin, require_key(params.key)?).await?,
+    ))
+}
+
+pub async fn save_otools_plugin_localstate_value(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_plugin_localstate_value(
+        params.plugin,
+        require_key(params.key)?,
+        require_value(params.value)?,
+    )
+    .await?;
+    Ok(Json(()))
+}
+
+pub async fn patch_otools_plugin_localstate(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::patch_otools_plugin_localstate(params.plugin, require_patch(params.patch)?).await?;
+    Ok(Json(()))
+}
+
+pub async fn get_otools_plugin_localstate_value_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    Ok(Json(
+        otools::get_otools_plugin_localstate_value_with_scheme(
+            params.plugin,
+            params.scheme,
+            require_key(params.key)?,
+        )
+        .await?,
+    ))
+}
+
+pub async fn save_otools_plugin_localstate_value_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_plugin_localstate_value_with_scheme(
+        params.plugin,
+        params.scheme,
+        require_key(params.key)?,
+        require_value(params.value)?,
+    )
+    .await?;
+    Ok(Json(()))
+}
+
+pub async fn patch_otools_plugin_localstate_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::patch_otools_plugin_localstate_with_scheme(
+        params.plugin,
+        params.scheme,
+        require_patch(params.patch)?,
+    )
+    .await?;
+    Ok(Json(()))
+}
+
+pub async fn get_otools_plugin_syncstate_value(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    Ok(Json(
+        otools::get_otools_plugin_syncstate_value(params.plugin, require_key(params.key)?).await?,
+    ))
+}
+
+pub async fn save_otools_plugin_syncstate_value(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_plugin_syncstate_value(
+        params.plugin,
+        require_key(params.key)?,
+        require_value(params.value)?,
+    )
+    .await?;
+    Ok(Json(()))
+}
+
+pub async fn patch_otools_plugin_syncstate(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::patch_otools_plugin_syncstate(params.plugin, require_patch(params.patch)?).await?;
+    Ok(Json(()))
+}
+
+pub async fn get_otools_plugin_syncstate_value_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    Ok(Json(
+        otools::get_otools_plugin_syncstate_value_with_scheme(
+            params.plugin,
+            params.scheme,
+            require_key(params.key)?,
+        )
+        .await?,
+    ))
+}
+
+pub async fn save_otools_plugin_syncstate_value_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::save_otools_plugin_syncstate_value_with_scheme(
+        params.plugin,
+        params.scheme,
+        require_key(params.key)?,
+        require_value(params.value)?,
+    )
+    .await?;
+    Ok(Json(()))
+}
+
+pub async fn patch_otools_plugin_syncstate_with_scheme(
+    Json(params): Json<OtoolsPluginStateParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::patch_otools_plugin_syncstate_with_scheme(
+        params.plugin,
+        params.scheme,
+        require_patch(params.patch)?,
+    )
+    .await?;
+    Ok(Json(()))
+}
+
 pub async fn otools_get_plugin_asset(
     Json(params): Json<AssetParams>,
 ) -> Result<Json<otools::OtoolsAssetPayload>, AppCommandError> {
     Ok(Json(
         otools::otools_get_plugin_asset(params.plugin_uuid, params.asset_path).await?,
     ))
+}
+
+fn require_state(value: Option<Value>) -> Result<Value, AppCommandError> {
+    value.ok_or_else(|| AppCommandError::invalid_input("state is required"))
+}
+
+fn require_value(value: Option<Value>) -> Result<Value, AppCommandError> {
+    value.ok_or_else(|| AppCommandError::invalid_input("value is required"))
+}
+
+fn require_patch(value: Option<Value>) -> Result<Value, AppCommandError> {
+    value.ok_or_else(|| AppCommandError::invalid_input("patch is required"))
+}
+
+fn require_key(value: Option<String>) -> Result<String, AppCommandError> {
+    value.ok_or_else(|| AppCommandError::invalid_input("key is required"))
 }
 
 pub async fn get_otools_config() -> Result<Json<otools::OtoolsConfig>, AppCommandError> {
