@@ -2364,17 +2364,36 @@ function otoolsCompatBootstrap(config: {
       return
     }
 
+    const pluginUuidFromPayload =
+      item &&
+      typeof item === "object" &&
+      "pluginUuid" in item &&
+      toStringSafe(item.pluginUuid).trim()
+        ? toStringSafe(item.pluginUuid).trim()
+        : pluginUuid
+    const nativeEventName = pluginUuidFromPayload
+      ? `otools-native:${pluginUuidFromPayload}`
+      : ""
+
     for (const listener of eventListeners.values()) {
-      if (listener.event !== topic) {
+      if (listener.event !== topic && listener.event !== nativeEventName) {
         continue
       }
       fireTransformCallback(listener.handlerId, {
         event: listener.event,
         id: listener.id,
         payload:
-          item && typeof item === "object" && "payload" in item
-            ? item.payload
-            : null,
+          listener.event === nativeEventName
+            ? {
+                topic,
+                payload:
+                  item && typeof item === "object" && "payload" in item
+                    ? item.payload
+                    : null,
+              }
+            : item && typeof item === "object" && "payload" in item
+              ? item.payload
+              : null,
       })
     }
   }
@@ -2577,6 +2596,24 @@ function otoolsCompatBootstrap(config: {
 
   const tauriInvoke = async (command, payload) => {
     switch (command) {
+      case "native_plugin_listen_acquire": {
+        const targetUuid = retainNativePluginPoll(
+          payload && (payload.uuid || payload.pluginUuid || payload.plugin)
+        )
+        void pollNativeLoop()
+        return {
+          ok: true,
+          pluginUuid: targetUuid || pluginUuid,
+        }
+      }
+      case "native_plugin_listen_release":
+        releaseNativePluginPoll(
+          payload && (payload.uuid || payload.pluginUuid || payload.plugin)
+        )
+        return {
+          ok: true,
+          pluginUuid,
+        }
       case "plugin:event|listen":
         return registerEventListener(payload)
       case "plugin:event|unlisten":
