@@ -81,6 +81,8 @@ struct OtoolsManifest {
     icon: Option<String>,
     entry: Option<String>,
     open_in_browser: Option<bool>,
+    #[serde(default, deserialize_with = "catalog::deserialize_plugin_permissions")]
+    permissions: Vec<String>,
     native: Option<OtoolsNativeManifest>,
 }
 
@@ -543,6 +545,7 @@ fn read_plugin_manifest(root: &Path) -> Result<Option<OtoolsPluginInfo>, HostErr
             .native
             .and_then(|native| native.enabled)
             .unwrap_or(false),
+        permissions: manifest.permissions,
         source: "local".to_string(),
         asset_base_url: format!("/otools-assets/{uuid}"),
     }))

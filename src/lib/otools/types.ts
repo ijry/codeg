@@ -10,6 +10,7 @@ export interface OtoolsPluginInfo {
   entry: string
   openInBrowser: boolean
   nativeEnabled: boolean
+  permissions: string[]
   source: string
   assetBaseUrl: string
 }

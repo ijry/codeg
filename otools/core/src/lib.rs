@@ -86,6 +86,7 @@ pub struct OtoolsPluginInfo {
     pub entry: String,
     pub open_in_browser: bool,
     pub native_enabled: bool,
+    pub permissions: Vec<String>,
     pub source: String,
     pub asset_base_url: String,
 }

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::{default_data_dir, HostError, OtoolsPluginInfo};
@@ -73,6 +73,7 @@ pub struct ToolPlugin {
     pub open_in_browser: Option<bool>,
     pub autostart: Option<ToolPluginAutostart>,
     pub shutdown_hooks: Option<Vec<ToolPluginShutdownHook>>,
+    #[serde(default, deserialize_with = "deserialize_plugin_permissions")]
     pub permissions: Vec<String>,
     #[serde(default = "default_enabled_true")]
     pub enabled: bool,
@@ -512,8 +513,78 @@ pub fn tool_plugin_to_info(plugin: ToolPlugin) -> OtoolsPluginInfo {
         entry: plugin.entry,
         open_in_browser: plugin.open_in_browser.unwrap_or(false),
         native_enabled: false,
+        permissions: plugin.permissions,
         source,
         asset_base_url,
+    }
+}
+
+pub fn deserialize_plugin_permissions<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(parse_plugin_permissions_value(value))
+}
+
+fn parse_plugin_permissions_value(value: Option<Value>) -> Vec<String> {
+    let mut permissions = Vec::new();
+    let mut push_permission = |raw: &str| {
+        if let Some(normalized) = normalize_plugin_permission(raw) {
+            if !permissions.contains(&normalized) {
+                permissions.push(normalized);
+            }
+        }
+    };
+
+    match value {
+        Some(Value::Array(items)) => {
+            for item in items {
+                if let Some(raw) = item.as_str() {
+                    push_permission(raw);
+                }
+            }
+        }
+        Some(Value::Object(map)) => {
+            for (key, value) in map {
+                if is_truthy_permission_value(&value) {
+                    push_permission(&key);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    permissions
+}
+
+fn normalize_plugin_permission(raw: &str) -> Option<String> {
+    let normalized = raw.trim().to_ascii_lowercase().replace(['-', ' '], "_");
+    match normalized.as_str() {
+        "fs" => Some("fs".to_string()),
+        "dialog" => Some("dialog".to_string()),
+        "shell" => Some("shell".to_string()),
+        "child_process" | "childprocess" => Some("child_process".to_string()),
+        _ => None,
+    }
+}
+
+fn is_truthy_permission_value(value: &Value) -> bool {
+    match value {
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number
+            .as_i64()
+            .map(|value| value != 0)
+            .or_else(|| number.as_u64().map(|value| value != 0))
+            .or_else(|| number.as_f64().map(|value| value != 0.0))
+            .unwrap_or(false),
+        Value::String(text) => {
+            matches!(
+                text.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        }
+        _ => false,
     }
 }
 
