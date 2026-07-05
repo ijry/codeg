@@ -92,6 +92,11 @@ pub async fn tools_webview_read_file(path: String) -> Result<WebviewReadFilePayl
     })
 }
 
+pub async fn tools_webview_file_meta(path: String) -> Result<WebviewFileMeta, HostError> {
+    let target = PathBuf::from(require_non_empty(path, "path")?);
+    build_file_meta(&target)
+}
+
 pub async fn tools_webview_write_file(request: WebviewWriteFileRequest) -> Result<(), HostError> {
     let path = require_non_empty(request.path, "path")?;
     let bytes = BASE64_STANDARD

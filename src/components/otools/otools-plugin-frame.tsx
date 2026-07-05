@@ -12,11 +12,13 @@ import type { OtoolsHostInfo, OtoolsPluginInfo } from "@/lib/otools/types"
 interface OtoolsPluginFrameProps {
   hostInfo: OtoolsHostInfo | null
   plugin: OtoolsPluginInfo
+  windowLabel?: string | null
 }
 
 export function OtoolsPluginFrame({
   hostInfo,
   plugin,
+  windowLabel,
 }: OtoolsPluginFrameProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const [frameState, setFrameState] = useState<{
@@ -38,7 +40,7 @@ export function OtoolsPluginFrame({
   useEffect(() => {
     let cancelled = false
 
-    loadOtoolsPluginDocument(src, plugin, hostInfo)
+    loadOtoolsPluginDocument(src, plugin, hostInfo, { windowLabel })
       .then((html) => {
         if (cancelled) return
         setFrameState({
@@ -59,7 +61,7 @@ export function OtoolsPluginFrame({
     return () => {
       cancelled = true
     }
-  }, [hostInfo, plugin, src])
+  }, [hostInfo, plugin, src, windowLabel])
 
   return (
     <div className="relative min-h-0 flex-1 bg-background">

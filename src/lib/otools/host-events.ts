@@ -9,6 +9,10 @@ export const OTOOLS_HOST_CHILD_THEME_SYNC_EVENT =
   "codeg:otools-child-theme-sync"
 export const OTOOLS_HOST_CHILD_LOCALE_SYNC_EVENT =
   "codeg:otools-child-locale-sync"
+const OTOOLS_HOST_CHILD_THEME_SYNC_STORAGE_KEY =
+  "codeg:otools-child-theme-sync:detail"
+const OTOOLS_HOST_CHILD_LOCALE_SYNC_STORAGE_KEY =
+  "codeg:otools-child-locale-sync:detail"
 
 export interface OtoolsHostCreateTabDetail {
   label: string
@@ -64,6 +68,26 @@ export interface OtoolsHostChildLocaleSyncDetail {
   locale?: string | null
 }
 
+function broadcastCrossWindowDetail(key: string, detail: unknown): void {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        detail,
+        nonce: Math.random().toString(36).slice(2),
+        ts: Date.now(),
+      })
+    )
+    window.localStorage.removeItem(key)
+  } catch {
+    return
+  }
+}
+
 export function dispatchOtoolsChildThemeSync(
   detail: OtoolsHostChildThemeSyncDetail
 ): void {
@@ -78,6 +102,7 @@ export function dispatchOtoolsChildThemeSync(
       }
     )
   )
+  broadcastCrossWindowDetail(OTOOLS_HOST_CHILD_THEME_SYNC_STORAGE_KEY, detail)
 }
 
 export function dispatchOtoolsChildLocaleSync(
@@ -94,4 +119,5 @@ export function dispatchOtoolsChildLocaleSync(
       }
     )
   )
+  broadcastCrossWindowDetail(OTOOLS_HOST_CHILD_LOCALE_SYNC_STORAGE_KEY, detail)
 }

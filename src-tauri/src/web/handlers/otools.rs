@@ -1,12 +1,15 @@
 use axum::{
     body::Body,
-    extract::{Path, RawPathParams},
-    http::{header, StatusCode},
+    extract::{Path, Query, RawPathParams},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::Response,
     Json,
 };
 use serde::Deserialize;
 use serde_json::Value;
+use std::io::SeekFrom;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio_util::io::ReaderStream;
 
 use crate::app_error::AppCommandError;
 use crate::commands::otools::{
@@ -19,6 +22,18 @@ use crate::commands::otools::{
 #[serde(rename_all = "camelCase")]
 pub struct OpenOtoolsWindowParams {
     pub source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtoolsHostFileParams {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OtoolsHostFileByteRange {
+    start: u64,
+    end: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -944,6 +959,12 @@ pub async fn tools_webview_read_file(
     Ok(Json(otools::tools_webview_read_file(params.path).await?))
 }
 
+pub async fn tools_webview_file_meta(
+    Json(params): Json<PathParams>,
+) -> Result<Json<otools::WebviewFileMeta>, AppCommandError> {
+    Ok(Json(otools::tools_webview_file_meta(params.path).await?))
+}
+
 pub async fn tools_webview_write_file(
     Json(params): Json<WebviewWriteFileRequest>,
 ) -> Result<Json<()>, AppCommandError> {
@@ -1239,6 +1260,149 @@ pub async fn otools_static(raw_params: RawPathParams) -> Result<Response, AppCom
         })
 }
 
+pub async fn otools_host_file(
+    Query(params): Query<OtoolsHostFileParams>,
+    request_headers: HeaderMap,
+) -> Result<Response, AppCommandError> {
+    let path = std::path::PathBuf::from(params.path.trim());
+    if path.as_os_str().is_empty() {
+        return Err(AppCommandError::invalid_input("path is required"));
+    }
+
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(AppCommandError::io)?;
+    if !metadata.is_file() {
+        return Err(AppCommandError::invalid_input("path is not a file"));
+    }
+
+    let file_size = metadata.len();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(guess_content_type(&path)),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+
+    let range = match parse_host_file_range(request_headers.get(header::RANGE), file_size) {
+        Ok(range) => range,
+        Err(()) => {
+            if let Ok(value) = HeaderValue::from_str(&format!("bytes */{file_size}")) {
+                headers.insert(header::CONTENT_RANGE, value);
+            }
+            return build_otools_host_file_response(
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                headers,
+                Body::empty(),
+            );
+        }
+    };
+
+    if let Some(range) = range {
+        let mut file = tokio::fs::File::open(&path)
+            .await
+            .map_err(AppCommandError::io)?;
+        file.seek(SeekFrom::Start(range.start))
+            .await
+            .map_err(AppCommandError::io)?;
+        let length = range.end - range.start + 1;
+        if let Ok(value) = HeaderValue::from_str(&length.to_string()) {
+            headers.insert(header::CONTENT_LENGTH, value);
+        }
+        if let Ok(value) =
+            HeaderValue::from_str(&format!("bytes {}-{}/{}", range.start, range.end, file_size))
+        {
+            headers.insert(header::CONTENT_RANGE, value);
+        }
+        return build_otools_host_file_response(
+            StatusCode::PARTIAL_CONTENT,
+            headers,
+            Body::from_stream(ReaderStream::new(file.take(length))),
+        );
+    }
+
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(AppCommandError::io)?;
+    if let Ok(length) = HeaderValue::from_str(&file_size.to_string()) {
+        headers.insert(header::CONTENT_LENGTH, length);
+    }
+    build_otools_host_file_response(
+        StatusCode::OK,
+        headers,
+        Body::from_stream(ReaderStream::new(file)),
+    )
+}
+
+fn parse_host_file_range(
+    header_value: Option<&HeaderValue>,
+    file_size: u64,
+) -> Result<Option<OtoolsHostFileByteRange>, ()> {
+    let Some(header_value) = header_value else {
+        return Ok(None);
+    };
+    let value = header_value.to_str().map_err(|_| ())?.trim();
+    let Some(raw_range) = value.strip_prefix("bytes=") else {
+        return Ok(None);
+    };
+    if file_size == 0 || raw_range.contains(',') {
+        return Err(());
+    }
+
+    let (start_raw, end_raw) = raw_range.split_once('-').ok_or(())?;
+    let start_raw = start_raw.trim();
+    let end_raw = end_raw.trim();
+
+    if start_raw.is_empty() {
+        let suffix_length = end_raw.parse::<u64>().map_err(|_| ())?;
+        if suffix_length == 0 {
+            return Err(());
+        }
+        let start = file_size.saturating_sub(suffix_length);
+        return Ok(Some(OtoolsHostFileByteRange {
+            start,
+            end: file_size - 1,
+        }));
+    }
+
+    let start = start_raw.parse::<u64>().map_err(|_| ())?;
+    if start >= file_size {
+        return Err(());
+    }
+    let end = if end_raw.is_empty() {
+        file_size - 1
+    } else {
+        end_raw.parse::<u64>().map_err(|_| ())?.min(file_size - 1)
+    };
+    if end < start {
+        return Err(());
+    }
+
+    Ok(Some(OtoolsHostFileByteRange { start, end }))
+}
+
+fn build_otools_host_file_response(
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, AppCommandError> {
+    Response::builder()
+        .status(status)
+        .body(body)
+        .map(|mut response| {
+            response.headers_mut().extend(headers);
+            response
+        })
+        .map_err(|error| {
+            AppCommandError::task_execution_failed("Failed to build OTools host file response")
+                .with_detail(error.to_string())
+        })
+}
+
 fn guess_content_type(path: &std::path::Path) -> &'static str {
     match path
         .extension()
@@ -1252,8 +1416,18 @@ fn guess_content_type(path: &std::path::Path) -> &'static str {
         Some("json") => "application/json; charset=utf-8",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
+        Some("gif") => "image/gif",
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("avif") => "image/avif",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("ogg") => "audio/ogg",
+        Some("m4a") => "audio/mp4",
+        Some("flac") => "audio/flac",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
         Some("wasm") => "application/wasm",
         Some("ico") => "image/x-icon",
         _ => "application/octet-stream",

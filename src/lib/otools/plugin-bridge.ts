@@ -3,6 +3,7 @@
 import { sendSystemNotification } from "@/lib/notification"
 import {
   closeCurrentWindow,
+  getCurrentWindow,
   openFileDialog,
   openPath,
   openUrl,
@@ -10,11 +11,13 @@ import {
 } from "@/lib/platform"
 import {
   getActiveRemoteConnectionId,
+  getActiveRemoteToken,
   getServerBaseUrl,
   getShellTransport,
   getTransport,
   isDesktop,
 } from "@/lib/transport"
+import { getCodegToken } from "@/lib/transport/web-auth"
 import {
   listOtoolsPlugins,
   getOtoolsConfig,
@@ -106,6 +109,13 @@ const OPEN_PATH_COMMANDS = new Set([
   "otools_shell_open_path",
 ])
 
+const SHELL_OPEN_COMMANDS = new Set([
+  "__otools_shell_open",
+  "plugin:shell|open",
+  "remote_service_shell_open",
+  "otools_shell_open",
+])
+
 const REVEAL_ITEM_COMMANDS = new Set([
   "__otools_reveal_item",
   "remote_service_shell_show_item_in_folder",
@@ -164,6 +174,7 @@ const HOST_COMMANDS = new Set([
 
 const TOOLS_WEBVIEW_FORWARD_COMMANDS = new Set([
   "tools_webview_read_file",
+  "tools_webview_file_meta",
   "tools_webview_write_file",
   "tools_webview_list_dir",
   "tools_webview_home_dir",
@@ -191,6 +202,13 @@ const WINDOW_LABEL = "otools"
 const LOCAL_TERMINAL_OUTPUT_EVENT = "local-terminal-output"
 const LOCAL_TERMINAL_STATUS_EVENT = "local-terminal-status"
 const MAX_LOCAL_TERMINAL_BUFFERED_EVENTS = 400
+const OTOOLS_RUNTIME_RESERVED_QUERY_KEYS = new Set([
+  "pluginUuid",
+  "windowLabel",
+  "title",
+  "entryPath",
+  "sourceUrl",
+])
 
 type OtoolsHostTerminalEventPayload = {
   terminal_id?: string
@@ -216,6 +234,7 @@ type OtoolsLocalTerminalSession = {
 }
 
 let copiedHostFiles: string[] = []
+let cachedOtoolsHostInfo: Promise<Record<string, unknown> | null> | null = null
 
 export function installOtoolsFrameBridge(
   frame: HTMLIFrameElement,
@@ -567,11 +586,21 @@ function isPluginHostDispatcherMiss(error: unknown): boolean {
 export async function loadOtoolsPluginDocument(
   entryUrl: string,
   plugin: OtoolsPluginInfo,
-  hostInfo?: OtoolsHostInfo | null
+  hostInfo?: OtoolsHostInfo | null,
+  options?: {
+    currentBrowserUrl?: string | null
+    initialLocaleSync?: { locale?: string | null } | null
+    initialThemeSync?: {
+      themeMode?: string | null
+      themeAccent?: string | null
+      resolvedTheme?: string | null
+    } | null
+    windowLabel?: string | null
+  }
 ): Promise<string> {
   const html = await loadPluginAssetText(plugin.uuid, plugin.entry, entryUrl)
   const inlinedHtml = await inlinePluginDocumentAssets(html, entryUrl, plugin)
-  return injectCompatBridge(inlinedHtml, entryUrl, plugin, hostInfo)
+  return injectCompatBridge(inlinedHtml, entryUrl, plugin, hostInfo, options)
 }
 
 async function loadPluginAssetText(
@@ -692,12 +721,24 @@ function escapeStyleText(value: string): string {
   return value.replace(/<\/style/gi, "<\\/style")
 }
 
-async function dispatchOtoolsCommand(
+export async function dispatchOtoolsCommand(
   pluginUuid: string,
   command: string,
   payload: unknown
 ): Promise<unknown> {
   const targetPluginUuid = resolvePayloadPluginUuid(pluginUuid, payload)
+
+  if (command.startsWith("plugin:remote-service|")) {
+    return dispatchOtoolsRemoteServiceCommand(command, payload)
+  }
+
+  if (command.startsWith("plugin:app|")) {
+    return dispatchTauriAppCommand(command, payload)
+  }
+
+  if (command.startsWith("plugin:path|")) {
+    return dispatchTauriPathCommand(command, payload)
+  }
 
   if (STATE_GET_COMMANDS.has(command)) {
     return getTransport().call(
@@ -823,6 +864,10 @@ async function dispatchOtoolsCommand(
     } catch {
       return openPath(path)
     }
+  }
+
+  if (SHELL_OPEN_COMMANDS.has(command)) {
+    return openOtoolsShellTarget(payload)
   }
 
   if (command === "open_directory" || command === "openWslUnc") {
@@ -1062,16 +1107,16 @@ async function dispatchOtoolsCommand(
       return hostTabExists(readStringField(payload, "label"))
     case "__otools_dialog_open":
     case "plugin:dialog|open":
-      return openFileDialog(extractDialogOpenOptions(payload))
+      return openOtoolsFileDialog(payload)
     case "__otools_dialog_save":
     case "plugin:dialog|save":
       return saveDialog(extractDialogSaveOptions(payload))
     case "tools_webview_pick_files":
-      return pickFiles(payload)
+      return pickHostFiles(payload)
     case "tools_webview_pick_folder":
-      return pickFolder(payload)
+      return pickHostFolder(payload)
     case "tools_webview_pick_save_path":
-      return pickSavePath(payload)
+      return pickHostSavePath(payload)
     case "__otools_dialog_message":
     case "plugin:dialog|message": {
       const message = readStringField(payload, "message")
@@ -1083,25 +1128,217 @@ async function dispatchOtoolsCommand(
     case "__otools_dialog_ask":
     case "plugin:dialog|ask":
       return window.confirm(readStringField(payload, "message"))
+    case "plugin:window|create":
+    case "plugin:webview|create_webview_window":
+      return openOtoolsShimWindow(targetPluginUuid, payload)
     case "__otools_poll_events":
       return getTransport().call("otools_poll_events")
     case "__otools_close_window":
     case "plugin:window|close":
-      return closeCurrentWindow()
+      await closeCurrentOtoolsWindow(payload)
+      return
+    case "plugin:window|destroy":
+      await closeCurrentOtoolsWindow(payload, true)
+      return
+    case "plugin:window|show":
+      await showCurrentOtoolsWindow(payload)
+      return
+    case "plugin:window|hide":
+      await hideCurrentOtoolsWindow(payload)
+      return
+    case "plugin:window|minimize":
+      await minimizeCurrentOtoolsWindow(payload)
+      return
+    case "plugin:window|unminimize":
+      await unminimizeCurrentOtoolsWindow(payload)
+      return
+    case "plugin:window|maximize":
+      await maximizeCurrentOtoolsWindow(payload)
+      return
+    case "plugin:window|unmaximize":
+      await unmaximizeCurrentOtoolsWindow(payload)
+      return
+    case "plugin:window|toggle_maximize":
+      await toggleCurrentOtoolsWindowMaximize(payload)
+      return
     case "plugin:window|is_focused":
       return document.hasFocus()
     case "plugin:window|is_visible":
       return !document.hidden
+    case "plugin:window|is_enabled":
+    case "plugin:window|is_decorated":
+    case "plugin:window|is_resizable":
+    case "plugin:window|is_maximizable":
+    case "plugin:window|is_minimizable":
+    case "plugin:window|is_closable":
+      return true
+    case "plugin:window|is_fullscreen":
+    case "plugin:window|is_always_on_top":
     case "plugin:window|is_maximized":
     case "plugin:window|is_minimized":
       return false
+    case "plugin:window|scale_factor":
+      return getCurrentOtoolsWindowScaleFactor(payload)
+    case "plugin:window|outer_position":
+      return getCurrentOtoolsWindowOuterPosition(payload)
+    case "plugin:window|inner_position":
+      return getCurrentOtoolsWindowInnerPosition(payload)
+    case "plugin:window|inner_size":
+      return getCurrentOtoolsWindowInnerSize(payload)
+    case "plugin:window|outer_size":
+      return getCurrentOtoolsWindowOuterSize(payload)
     case "plugin:window|title":
       return document.title || "OTools"
+    case "plugin:window|theme":
+      return getCurrentOtoolsWindowTheme()
+    case "plugin:window|current_monitor":
+    case "plugin:window|primary_monitor":
+    case "plugin:window|monitor_from_point":
+      return null
+    case "plugin:window|available_monitors":
+      return []
+    case "plugin:window|cursor_position":
+      return {
+        x: 0,
+        y: 0,
+      }
+    case "plugin:window|center":
+      await centerCurrentOtoolsWindow(payload)
+      return
+    case "plugin:window|request_user_attention":
+      await requestCurrentOtoolsWindowAttention(payload)
+      return
+    case "plugin:window|set_title":
+      await setCurrentOtoolsWindowTitle(payload)
+      return
+    case "plugin:window|set_resizable":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setResizable")
+      return
+    case "plugin:window|set_enabled":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setEnabled")
+      return
+    case "plugin:window|set_maximizable":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setMaximizable")
+      return
+    case "plugin:window|set_minimizable":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setMinimizable")
+      return
+    case "plugin:window|set_closable":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setClosable")
+      return
+    case "plugin:window|set_decorations":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setDecorations")
+      return
+    case "plugin:window|set_shadow":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setShadow")
+      return
+    case "plugin:window|set_always_on_bottom":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setAlwaysOnBottom")
+      return
+    case "plugin:window|set_content_protected":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setContentProtected")
+      return
+    case "plugin:window|set_always_on_top":
+      await setCurrentOtoolsWindowAlwaysOnTop(payload)
+      return
+    case "plugin:window|set_ignore_cursor_events":
+      await setCurrentOtoolsWindowIgnoreCursorEvents(payload)
+      return
+    case "plugin:window|set_position":
+      await setCurrentOtoolsWindowPosition(payload)
+      return
+    case "plugin:window|set_size":
+      await setCurrentOtoolsWindowSize(payload)
+      return
+    case "plugin:window|set_min_size":
+      await setCurrentOtoolsWindowNoopMethod(payload, "setMinSize")
+      return
+    case "plugin:window|set_max_size":
+      await setCurrentOtoolsWindowNoopMethod(payload, "setMaxSize")
+      return
+    case "plugin:window|set_size_constraints":
+      await setCurrentOtoolsWindowNoopMethod(payload, "setSizeConstraints")
+      return
+    case "plugin:window|set_fullscreen":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setFullscreen")
+      return
+    case "plugin:window|set_simple_fullscreen":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setSimpleFullscreen")
+      return
     case "plugin:window|set_focus":
-      window.focus()
+      await focusCurrentOtoolsWindow(payload)
+      return
+    case "plugin:window|set_focusable":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setFocusable")
+      return
+    case "plugin:window|set_skip_taskbar":
+      await setCurrentOtoolsWindowBooleanMethod(payload, "setSkipTaskbar")
+      return
+    case "plugin:window|set_background_color":
+      await setCurrentOtoolsWindowNoopMethod(payload, "setBackgroundColor")
+      return
+    case "plugin:window|set_theme":
+      await setCurrentOtoolsWindowNoopMethod(payload, "setTheme")
+      return
+    case "plugin:window|set_badge_count":
+    case "plugin:window|set_badge_label":
+    case "plugin:window|set_cursor_grab":
+    case "plugin:window|set_cursor_icon":
+    case "plugin:window|set_cursor_position":
+    case "plugin:window|set_cursor_visible":
+    case "plugin:window|set_effects":
+    case "plugin:window|set_icon":
+    case "plugin:window|set_overlay_icon":
+    case "plugin:window|set_progress_bar":
+    case "plugin:window|set_title_bar_style":
+      await setCurrentOtoolsWindowNoopMethod(payload, command.split("|")[1])
+      return
+    case "plugin:window|set_visible_on_all_workspaces":
+      await setCurrentOtoolsWindowVisibleOnAllWorkspaces(payload)
+      return
+    case "plugin:window|start_dragging":
+      await setCurrentOtoolsWindowNoopMethod(payload, "startDragging")
+      return
+    case "plugin:window|start_resize_dragging":
+      await setCurrentOtoolsWindowNoopMethod(payload, "startResizeDragging")
       return
     case "plugin:window|get_all_windows":
-      return [WINDOW_LABEL]
+      return listCurrentOtoolsWindowLabels()
+    case "plugin:webview|get_all_webviews":
+      return listCurrentOtoolsWindowLabels().map((label) => ({
+        label,
+        windowLabel: label,
+      }))
+    case "plugin:webview|create_webview":
+      return openOtoolsShimWindow(targetPluginUuid, payload)
+    case "plugin:webview|webview_position":
+      return getCurrentOtoolsWindowInnerPosition(payload)
+    case "plugin:webview|webview_size":
+      return getCurrentOtoolsWindowInnerSize(payload)
+    case "plugin:webview|webview_close":
+      await closeCurrentOtoolsWindow(payload)
+      return
+    case "plugin:webview|set_webview_size":
+      await setCurrentOtoolsWindowSize(payload)
+      return
+    case "plugin:webview|set_webview_position":
+      await setCurrentOtoolsWindowPosition(payload)
+      return
+    case "plugin:webview|set_webview_focus":
+      await focusCurrentOtoolsWindow(payload)
+      return
+    case "plugin:webview|webview_hide":
+      await hideCurrentOtoolsWindow(payload)
+      return
+    case "plugin:webview|webview_show":
+      await showCurrentOtoolsWindow(payload)
+      return
+    case "plugin:webview|set_webview_auto_resize":
+    case "plugin:webview|set_webview_zoom":
+    case "plugin:webview|set_webview_background_color":
+    case "plugin:webview|clear_all_browsing_data":
+    case "plugin:webview|reparent":
+      return
     case "otools_get_launch_at_startup":
       if (isDesktop()) {
         return getShellTransport().call("otools_get_launch_at_startup")
@@ -1231,6 +1468,322 @@ async function dispatchConfigCommand(
   }
 }
 
+async function dispatchTauriAppCommand(
+  command: string,
+  payload: unknown
+): Promise<unknown> {
+  const hostInfo = await readCachedOtoolsHostInfo()
+  switch (command) {
+    case "plugin:app|name":
+      return readHostInfoString(hostInfo, "appName") || "codeg-plus"
+    case "plugin:app|version":
+      return readHostInfoString(hostInfo, "appVersion") || "0"
+    case "plugin:app|tauri_version":
+      return "2"
+    case "plugin:app|identifier":
+      return "com.codeg.plus"
+    case "plugin:app|bundle_type":
+      return "unknown"
+    case "plugin:app|app_show":
+      return showCurrentOtoolsWindow(payload)
+    case "plugin:app|app_hide":
+      return hideCurrentOtoolsWindow(payload)
+    case "plugin:app|default_window_icon":
+      return null
+    case "plugin:app|set_app_theme":
+    case "plugin:app|set_dock_visibility":
+    case "plugin:app|remove_data_store":
+      return
+    case "plugin:app|fetch_data_store_identifiers":
+      return []
+    default:
+      return null
+  }
+}
+
+async function dispatchTauriPathCommand(
+  command: string,
+  payload: unknown
+): Promise<unknown> {
+  const hostInfo = await readCachedOtoolsHostInfo()
+  switch (command) {
+    case "plugin:path|resolve_directory": {
+      const directory =
+        readOptionalNumberValue(asRecord(payload)?.directory) ?? 0
+      const base = resolveTauriBaseDirectory(hostInfo, directory)
+      const child = readOptionalStringField(payload, "path")
+      return child ? joinHostPathSegments([base, child], hostInfo) : base
+    }
+    case "plugin:path|join":
+    case "plugin:path|resolve":
+      return joinHostPathSegments(readStringArrayField(payload, "paths"), hostInfo)
+    case "plugin:path|normalize":
+      return normalizeHostPath(readStringField(payload, "path"), hostInfo)
+    case "plugin:path|dirname":
+      return dirnameHostPath(readStringField(payload, "path"), hostInfo)
+    case "plugin:path|extname":
+      return extnameHostPath(readStringField(payload, "path"))
+    case "plugin:path|basename":
+      return basenameHostPath(
+        readStringField(payload, "path"),
+        readOptionalStringField(payload, "ext")
+      )
+    case "plugin:path|is_absolute":
+      return isAbsoluteHostPath(readStringField(payload, "path"))
+    default:
+      return ""
+  }
+}
+
+async function dispatchOtoolsRemoteServiceCommand(
+  command: string,
+  payload: unknown
+): Promise<unknown> {
+  const remoteCommand = command.replace(/^plugin:remote-service\|/, "")
+  const record = asRecord(payload)
+
+  switch (remoteCommand) {
+    case "remote_service_shell_open":
+      return openOtoolsShellTarget(record?.request ?? payload)
+    case "remote_service_shell_open_path":
+      return openOtoolsShellPath(readStringField(payload, "path"))
+    case "remote_service_shell_show_item_in_folder":
+      return revealOtoolsShellPath(readStringField(payload, "path"))
+    case "remote_service_shell_trash_item":
+      return trashOtoolsShellPath(readStringField(payload, "path"))
+    case "remote_service_shell_open_external":
+      return openOtoolsShellExternal(readStringField(payload, "url"))
+    case "remote_service_shell_beep":
+      return beepOtoolsShell()
+    case "remote_service_pick_files":
+      return pickHostFiles(record?.options ?? payload)
+    case "remote_service_read_file":
+      return getTransport().call("tools_webview_read_file", {
+        path: readStringField(payload, "path"),
+      })
+    case "remote_service_pick_save_path":
+      return pickHostSavePath(record?.options ?? payload)
+    case "remote_service_pick_folder":
+      return pickHostFolder(record?.options ?? payload)
+    case "remote_service_write_file":
+      return getTransport().call(
+        "tools_webview_write_file",
+        asRecord(record?.request) ?? {}
+      )
+    case "remote_service_list_dir":
+      return getTransport().call("tools_webview_list_dir", {
+        path: readStringField(payload, "path"),
+      })
+    case "remote_service_browse_dialog":
+      return getTransport().call("tools_webview_browse_dialog", {
+        path: readOptionalStringField(record?.request, "path"),
+      })
+    case "remote_service_home_dir":
+      return getTransport().call("tools_webview_home_dir")
+    case "remote_service_join_path":
+      return getTransport().call("tools_webview_join_path", {
+        parts: readStringArrayField(payload, "parts"),
+      })
+    case "remote_service_create_dir":
+      return getTransport().call("tools_webview_create_dir", {
+        path: readStringField(payload, "path"),
+      })
+    case "remote_service_touch_file":
+      return getTransport().call("tools_webview_touch_file", {
+        path: readStringField(payload, "path"),
+      })
+    case "remote_service_remove_entry":
+      return getTransport().call("tools_webview_remove_entry", {
+        path: readStringField(payload, "path"),
+        recursive: readBooleanField(payload, "recursive"),
+      })
+    case "remote_service_rename_entry":
+      return getTransport().call(
+        "tools_webview_rename_entry",
+        asRecord(record?.request) ?? {}
+      )
+    default:
+      throw new Error(`Unsupported OTools remote service command: ${remoteCommand}`)
+  }
+}
+
+function readCachedOtoolsHostInfo(): Promise<Record<string, unknown> | null> {
+  if (!cachedOtoolsHostInfo) {
+    cachedOtoolsHostInfo = getTransport()
+      .call("otools_host_info")
+      .then((value) => asRecord(value))
+      .catch(() => null)
+  }
+  return cachedOtoolsHostInfo
+}
+
+function readHostInfoString(
+  hostInfo: Record<string, unknown> | null,
+  key: string
+): string {
+  const value = hostInfo?.[key]
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function readHostInfoPaths(
+  hostInfo: Record<string, unknown> | null
+): Record<string, unknown> {
+  return asRecord(hostInfo?.paths) ?? {}
+}
+
+function resolveTauriBaseDirectory(
+  hostInfo: Record<string, unknown> | null,
+  directory: number
+): string {
+  const paths = readHostInfoPaths(hostInfo)
+  const byName = (name: string) =>
+    typeof paths[name] === "string" ? String(paths[name]) : ""
+
+  switch (directory) {
+    case 1:
+      return byName("music") || byName("home")
+    case 2:
+      return byName("cache") || byName("home")
+    case 3:
+      return byName("config") || byName("appData") || byName("home")
+    case 4:
+      return byName("data") || byName("appData") || byName("home")
+    case 5:
+      return byName("localData") || byName("data") || byName("home")
+    case 6:
+      return byName("documents") || byName("home")
+    case 7:
+      return byName("downloads") || byName("home")
+    case 8:
+      return byName("pictures") || byName("home")
+    case 9:
+      return byName("public") || byName("home")
+    case 10:
+      return byName("videos") || byName("home")
+    case 11:
+      return byName("resource") || byName("userData") || byName("home")
+    case 12:
+      return byName("temp") || byName("home")
+    case 13:
+      return byName("appConfig") || byName("userData") || byName("home")
+    case 14:
+      return byName("userData") || byName("appData") || byName("home")
+    case 15:
+      return byName("userData") || byName("localData") || byName("home")
+    case 16:
+      return byName("appCache") || byName("cache") || byName("userData") || byName("home")
+    case 17:
+      return byName("logs") || byName("userData") || byName("home")
+    case 18:
+      return byName("desktop") || byName("home")
+    case 19:
+      return byName("executable") || byName("home")
+    case 20:
+      return byName("font") || byName("home")
+    case 21:
+      return byName("home")
+    case 22:
+      return byName("runtime") || byName("temp") || byName("home")
+    case 23:
+      return byName("template") || byName("documents") || byName("home")
+    default:
+      return byName("home") || byName("userData") || ""
+  }
+}
+
+function hostPathSeparator(
+  hostInfo: Record<string, unknown> | null,
+  sample = ""
+): "\\" | "/" {
+  const platform = readHostInfoString(hostInfo, "platform").toLowerCase()
+  if (platform === "windows" || /^[A-Za-z]:[\\/]/.test(sample)) {
+    return "\\"
+  }
+  return "/"
+}
+
+function joinHostPathSegments(
+  parts: string[],
+  hostInfo: Record<string, unknown> | null
+): string {
+  const filtered = parts.map((part) => part.trim()).filter(Boolean)
+  if (!filtered.length) {
+    return ""
+  }
+
+  const sep = hostPathSeparator(hostInfo, filtered[0])
+  const first = filtered[0].replace(/[\\/]+$/, "")
+  const rest = filtered
+    .slice(1)
+    .map((part) => part.replace(/^[\\/]+|[\\/]+$/g, ""))
+    .filter(Boolean)
+  return normalizeHostPath([first, ...rest].join(sep), hostInfo)
+}
+
+function normalizeHostPath(
+  path: string,
+  hostInfo: Record<string, unknown> | null
+): string {
+  const raw = path.trim()
+  if (!raw) {
+    return ""
+  }
+
+  const sep = hostPathSeparator(hostInfo, raw)
+  const prefix = /^[A-Za-z]:/.test(raw) ? raw.slice(0, 2) : raw.startsWith("/") ? "/" : ""
+  const withoutPrefix = prefix && prefix !== "/" ? raw.slice(2) : raw
+  const segments = withoutPrefix
+    .split(/[\\/]+/)
+    .filter((part) => part && part !== ".")
+  const resolved: string[] = []
+  for (const segment of segments) {
+    if (segment === ".." && resolved.length && resolved[resolved.length - 1] !== "..") {
+      resolved.pop()
+    } else if (segment !== ".." || !prefix) {
+      resolved.push(segment)
+    }
+  }
+
+  if (prefix === "/") {
+    return `${sep}${resolved.join(sep)}`
+  }
+  if (prefix) {
+    const suffix = resolved.join(sep)
+    return suffix ? `${prefix}${sep}${suffix}` : `${prefix}${sep}`
+  }
+  return resolved.join(sep)
+}
+
+function dirnameHostPath(
+  path: string,
+  hostInfo: Record<string, unknown> | null
+): string {
+  const normalized = normalizeHostPath(path, hostInfo).replace(/[\\/]+$/, "")
+  const index = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"))
+  if (index <= 0) {
+    return isAbsoluteHostPath(normalized) ? normalized.slice(0, index + 1) : "."
+  }
+  return normalized.slice(0, index)
+}
+
+function basenameHostPath(path: string, ext: string | null): string {
+  const name = readHostPathName(path, "")
+  if (ext && name.endsWith(ext)) {
+    return name.slice(0, -ext.length)
+  }
+  return name
+}
+
+function extnameHostPath(path: string): string {
+  const name = readHostPathName(path, "")
+  const index = name.lastIndexOf(".")
+  return index > 0 ? name.slice(index + 1) : ""
+}
+
+function isAbsoluteHostPath(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\")
+}
+
 async function saveNormalizedConfigValue(
   key: string,
   value: unknown
@@ -1248,10 +1801,20 @@ function injectCompatBridge(
   html: string,
   entryUrl: string,
   plugin: OtoolsPluginInfo,
-  hostInfo?: OtoolsHostInfo | null
+  hostInfo?: OtoolsHostInfo | null,
+  options?: {
+    currentBrowserUrl?: string | null
+    initialLocaleSync?: { locale?: string | null } | null
+    initialThemeSync?: {
+      themeMode?: string | null
+      themeAccent?: string | null
+      resolvedTheme?: string | null
+    } | null
+    windowLabel?: string | null
+  }
 ): string {
   const baseHref = new URL(".", entryUrl).toString()
-  const script = `<script id="codeg-otools-bridge">${buildCompatBridgeScript(plugin, hostInfo)}</script>`
+  const script = `<script id="codeg-otools-bridge">${buildCompatBridgeScript(plugin, hostInfo, options)}</script>`
   const base = `<base href="${escapeHtml(baseHref)}" />`
   const pluginUuid = plugin.uuid
   const marker = `<meta name="codeg-otools-plugin" content="${escapeHtml(pluginUuid)}" />`
@@ -1273,7 +1836,17 @@ function injectCompatBridge(
 
 function buildCompatBridgeScript(
   plugin: OtoolsPluginInfo,
-  hostInfo?: OtoolsHostInfo | null
+  hostInfo?: OtoolsHostInfo | null,
+  options?: {
+    currentBrowserUrl?: string | null
+    initialLocaleSync?: { locale?: string | null } | null
+    initialThemeSync?: {
+      themeMode?: string | null
+      themeAccent?: string | null
+      resolvedTheme?: string | null
+    } | null
+    windowLabel?: string | null
+  }
 ): string {
   return `;(${otoolsCompatBootstrap.toString()})(${JSON.stringify({
     appName: hostInfo?.appName || "codeg-plus",
@@ -1281,7 +1854,8 @@ function buildCompatBridgeScript(
     isDev: hostInfo?.isDev === true,
     currentFolderPath: "",
     currentBrowserUrl:
-      typeof window !== "undefined" ? window.location.href : "",
+      options?.currentBrowserUrl ||
+      (typeof window !== "undefined" ? window.location.href : ""),
     nativeId: hostInfo?.nativeId || plugin.uuid,
     pluginPermissions: Array.isArray(plugin.permissions)
       ? plugin.permissions
@@ -1289,7 +1863,13 @@ function buildCompatBridgeScript(
     paths: hostInfo?.paths ?? {},
     platform: hostInfo?.platform,
     pluginUuid: plugin.uuid,
-    windowLabel: WINDOW_LABEL,
+    hostFileAuthToken: getActiveRemoteToken() || getCodegToken(),
+    hostFileBaseUrl: getServerBaseUrl(),
+    useTauriAssetProtocol:
+      isDesktop() && getActiveRemoteConnectionId() === null,
+    initialLocaleSync: options?.initialLocaleSync ?? null,
+    initialThemeSync: options?.initialThemeSync ?? null,
+    windowLabel: String(options?.windowLabel || "").trim() || WINDOW_LABEL,
   })});`
 }
 
@@ -1299,11 +1879,22 @@ function otoolsCompatBootstrap(config: {
   currentFolderPath?: string
   currentBrowserUrl: string
   isDev?: boolean
+  initialLocaleSync?: {
+    locale?: string | null
+  } | null
+  initialThemeSync?: {
+    themeMode?: string | null
+    themeAccent?: string | null
+    resolvedTheme?: string | null
+  } | null
   nativeId?: string
   pluginPermissions?: string[]
   paths: Record<string, string>
   platform?: string
   pluginUuid: string
+  hostFileAuthToken?: string
+  hostFileBaseUrl?: string
+  useTauriAssetProtocol?: boolean
   windowLabel: string
 }) {
   if (typeof window === "undefined" || window.otools) {
@@ -1339,6 +1930,11 @@ function otoolsCompatBootstrap(config: {
   let callbackSeq = 0
   let eventSeq = 0
   let polling = false
+  const crossWindowEventBusName = "codeg:otools:event-bus"
+  const crossWindowEventSourceId = `${windowLabel}:${Math.random()
+    .toString(36)
+    .slice(2)}`
+  let crossWindowEventChannel = null
 
   const env = {
     appName: String(config.appName || "codeg-plus"),
@@ -1362,6 +1958,167 @@ function otoolsCompatBootstrap(config: {
     }
     return String(value)
   }
+
+  const trimRightSlash = (value) => toStringSafe(value).replace(/\/+$/, "")
+
+  const normalizeLocalFilePath = (value) => {
+    const raw = toStringSafe(value).trim()
+    if (!raw) {
+      return raw
+    }
+
+    if (raw.startsWith("file://")) {
+      try {
+        const url = new URL(raw)
+        let path = decodeURIComponent(url.pathname)
+        if (path.startsWith("/") && /^[A-Za-z]:/.test(path.slice(1))) {
+          path = path.slice(1)
+        }
+        return path
+      } catch {
+        return raw
+      }
+    }
+
+    return raw
+  }
+
+  const isLocalFilePath = (value) => {
+    const raw = toStringSafe(value)
+    return raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw)
+  }
+
+  const convertHostFileSrc = (filePath, protocol = "asset") => {
+    const normalized = normalizeLocalFilePath(filePath)
+    if (!isLocalFilePath(normalized)) {
+      return toStringSafe(filePath)
+    }
+
+    if (config.useTauriAssetProtocol === true) {
+      const encoded = encodeURIComponent(normalized)
+      return currentPlatform === "windows"
+        ? `http://${protocol}.localhost/${encoded}`
+        : `${protocol}://localhost/${encoded}`
+    }
+
+    const baseUrl =
+      trimRightSlash(config.hostFileBaseUrl) || trimRightSlash(window.location.origin)
+    if (!baseUrl) {
+      return normalized
+    }
+
+    const params = new URLSearchParams()
+    params.set("path", normalized)
+    const token = toStringSafe(config.hostFileAuthToken).trim()
+    if (token) {
+      params.set("codegToken", token)
+    }
+    return `${baseUrl}/__tauri_remote_service_file__?${params.toString()}`
+  }
+
+  const OTOOLS_HOST_CHILD_THEME_SYNC_EVENT_NAME =
+    "codeg:otools-child-theme-sync"
+  const OTOOLS_HOST_CHILD_LOCALE_SYNC_EVENT_NAME =
+    "codeg:otools-child-locale-sync"
+  const OTOOLS_HOST_CHILD_THEME_SYNC_STORAGE_KEY =
+    "codeg:otools-child-theme-sync:detail"
+  const OTOOLS_HOST_CHILD_LOCALE_SYNC_STORAGE_KEY =
+    "codeg:otools-child-locale-sync:detail"
+  const OTOOLS_THEME_SYNC_BRIDGE_EVENT = "otools-theme-sync-requested"
+  const OTOOLS_LOCALE_SYNC_BRIDGE_EVENT = "otools-locale-changed"
+  const themeAccentToHostColor = {
+    classic: "blue",
+    violet: "violet",
+    emerald: "green",
+    amber: "orange",
+    pink: "rose",
+  }
+
+  const applyInitialThemeSync = (detail) => {
+    const themeMode = toStringSafe(detail && detail.themeMode).trim() || "system"
+    const themeAccent =
+      toStringSafe(detail && detail.themeAccent).trim() || "classic"
+    const resolvedTheme =
+      toStringSafe(detail && detail.resolvedTheme).trim() === "dark"
+        ? "dark"
+        : "light"
+
+    const root = document.documentElement
+    if (root) {
+      root.classList.toggle("dark", resolvedTheme === "dark")
+      root.classList.toggle("light", resolvedTheme === "light")
+      root.style.colorScheme = resolvedTheme
+      root.setAttribute("data-theme-mode", themeMode)
+      root.setAttribute("data-theme-accent", themeAccent)
+      root.setAttribute(
+        "data-theme",
+        themeAccentToHostColor[themeAccent] || themeAccentToHostColor.classic
+      )
+    }
+
+    window.__OTOOLS_THEME__ = {
+      themeMode,
+      themeAccent,
+      resolvedTheme,
+    }
+    window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent(OTOOLS_THEME_SYNC_BRIDGE_EVENT, {
+          detail: {
+            themeMode,
+            themeAccent,
+            resolvedTheme,
+          },
+        })
+      )
+    }, 0)
+  }
+
+  const applyInitialLocaleSync = (detail) => {
+    const locale = toStringSafe(detail && detail.locale).trim() || "en"
+    const root = document.documentElement
+    if (root) {
+      root.setAttribute("lang", locale)
+    }
+
+    window.__OTOOLS_LOCALE__ = {
+      locale,
+    }
+    window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent(OTOOLS_LOCALE_SYNC_BRIDGE_EVENT, {
+          detail: {
+            locale,
+          },
+        })
+      )
+    }, 0)
+  }
+
+  window.addEventListener(OTOOLS_HOST_CHILD_THEME_SYNC_EVENT_NAME, (event) => {
+    applyInitialThemeSync(event && event.detail)
+  })
+  window.addEventListener(OTOOLS_HOST_CHILD_LOCALE_SYNC_EVENT_NAME, (event) => {
+    applyInitialLocaleSync(event && event.detail)
+  })
+  window.addEventListener("storage", (event) => {
+    if (typeof event.newValue !== "string" || !event.newValue) {
+      return
+    }
+
+    try {
+      const parsed = JSON.parse(event.newValue)
+      if (event.key === OTOOLS_HOST_CHILD_THEME_SYNC_STORAGE_KEY) {
+        applyInitialThemeSync(parsed && parsed.detail)
+        return
+      }
+      if (event.key === OTOOLS_HOST_CHILD_LOCALE_SYNC_STORAGE_KEY) {
+        applyInitialLocaleSync(parsed && parsed.detail)
+      }
+    } catch {}
+  })
+  applyInitialThemeSync(config.initialThemeSync)
+  applyInitialLocaleSync(config.initialLocaleSync)
 
   const normalizePluginUuid = (value) => {
     const raw = toStringSafe(value).trim()
@@ -1446,6 +2203,13 @@ function otoolsCompatBootstrap(config: {
 
   const postInvoke = (command, payload) => {
     const id = `${pluginUuid || "otools"}:${++requestSeq}`
+    const directInvoke =
+      typeof window.__OToolsBridgePostInvoke === "function"
+        ? window.__OToolsBridgePostInvoke
+        : null
+    if (directInvoke) {
+      return Promise.resolve(directInvoke(command, payload ?? {}))
+    }
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject })
       window.parent.postMessage(
@@ -1511,6 +2275,75 @@ function otoolsCompatBootstrap(config: {
     }
   }
 
+  const readEventPayload = (payload) => {
+    if (payload && typeof payload === "object" && "payload" in payload) {
+      return payload.payload ?? null
+    }
+    return null
+  }
+
+  const normalizeEventTarget = (target) => {
+    if (!target) {
+      return null
+    }
+    if (typeof target === "string") {
+      return {
+        kind: "AnyLabel",
+        label: target,
+      }
+    }
+    if (typeof target === "object") {
+      return target
+    }
+    return null
+  }
+
+  const matchesEventTarget = (target) => {
+    const normalized = normalizeEventTarget(target)
+    if (!normalized) {
+      return true
+    }
+
+    const kind = toStringSafe(normalized.kind).trim()
+    const label = toStringSafe(normalized.label).trim()
+
+    if (!kind || kind === "Any" || kind === "App" || kind === "AnyLabel") {
+      return !label || label === windowLabel
+    }
+
+    if (kind === "Current") {
+      return true
+    }
+
+    if (
+      kind === "Window" ||
+      kind === "Webview" ||
+      kind === "WebviewWindow"
+    ) {
+      return !label || label === windowLabel
+    }
+
+    return true
+  }
+
+  const dispatchLocalOtoolsEvent = (event, payloadValue, target) => {
+    const name = toStringSafe(event).trim()
+    if (!name || !matchesEventTarget(target)) {
+      return
+    }
+
+    const data = {
+      event: name,
+      id: -1,
+      payload: payloadValue ?? null,
+    }
+
+    for (const listener of eventListeners.values()) {
+      if (listener.event !== name) continue
+      fireTransformCallback(listener.handlerId, data)
+    }
+  }
+
   const dispatchNativeEnvelope = (item) => {
     for (const listener of nativeListeners) {
       try {
@@ -1540,6 +2373,99 @@ function otoolsCompatBootstrap(config: {
             : null,
       })
     }
+  }
+
+  const retainNativePluginPoll = (uuid) => {
+    const targetUuid = resolvePluginUuid(uuid)
+    if (!targetUuid) {
+      return ""
+    }
+    nativeListenerPluginRefs.set(
+      targetUuid,
+      Number(nativeListenerPluginRefs.get(targetUuid) || 0) + 1
+    )
+    return targetUuid
+  }
+
+  const releaseNativePluginPoll = (uuid) => {
+    const targetUuid = resolvePluginUuid(uuid)
+    if (!targetUuid) {
+      return
+    }
+    const nextCount = Number(nativeListenerPluginRefs.get(targetUuid) || 0) - 1
+    if (nextCount > 0) {
+      nativeListenerPluginRefs.set(targetUuid, nextCount)
+    } else {
+      nativeListenerPluginRefs.delete(targetUuid)
+    }
+  }
+
+  const handleCrossWindowEventRecord = (record) => {
+    if (!record || typeof record !== "object") {
+      return
+    }
+
+    if (record.sourceId === crossWindowEventSourceId) {
+      return
+    }
+
+    if (record.type !== "otools:event") {
+      return
+    }
+
+    dispatchLocalOtoolsEvent(record.event, record.payload ?? null, record.target)
+  }
+
+  if (typeof BroadcastChannel === "function") {
+    try {
+      crossWindowEventChannel = new BroadcastChannel(crossWindowEventBusName)
+      crossWindowEventChannel.addEventListener("message", (event) => {
+        handleCrossWindowEventRecord(event.data)
+      })
+    } catch {}
+  }
+
+  if (!crossWindowEventChannel) {
+    window.addEventListener("storage", (event) => {
+      if (
+        event.key !== crossWindowEventBusName ||
+        typeof event.newValue !== "string" ||
+        !event.newValue
+      ) {
+        return
+      }
+
+      try {
+        handleCrossWindowEventRecord(JSON.parse(event.newValue))
+      } catch {}
+    })
+  }
+
+  const broadcastCrossWindowEvent = (event, payloadValue, target) => {
+    const name = toStringSafe(event).trim()
+    if (!name) {
+      return
+    }
+
+    const record = {
+      type: "otools:event",
+      sourceId: crossWindowEventSourceId,
+      event: name,
+      payload: payloadValue ?? null,
+      target: normalizeEventTarget(target),
+    }
+
+    if (crossWindowEventChannel) {
+      try {
+        crossWindowEventChannel.postMessage(record)
+        return
+      } catch {}
+    }
+
+    try {
+      window.localStorage.setItem(crossWindowEventBusName, JSON.stringify(record))
+      window.localStorage.removeItem(crossWindowEventBusName)
+    } catch {}
   }
 
   const pollNativeLoop = async () => {
@@ -1586,25 +2512,12 @@ function otoolsCompatBootstrap(config: {
       handler(event)
     }
     nativeListeners.add(wrappedHandler)
-    if (targetUuid) {
-      nativeListenerPluginRefs.set(
-        targetUuid,
-        Number(nativeListenerPluginRefs.get(targetUuid) || 0) + 1
-      )
-    }
+    retainNativePluginPoll(targetUuid)
     void pollNativeLoop()
 
     return async () => {
       nativeListeners.delete(wrappedHandler)
-      if (targetUuid) {
-        const nextCount =
-          Number(nativeListenerPluginRefs.get(targetUuid) || 0) - 1
-        if (nextCount > 0) {
-          nativeListenerPluginRefs.set(targetUuid, nextCount)
-        } else {
-          nativeListenerPluginRefs.delete(targetUuid)
-        }
-      }
+      releaseNativePluginPoll(targetUuid)
     }
   }
 
@@ -1616,10 +2529,12 @@ function otoolsCompatBootstrap(config: {
     }
 
     const id = ++eventSeq
+    const nativePluginUuid = retainNativePluginPoll(pluginUuid)
     eventListeners.set(id, {
       event,
       handlerId,
       id,
+      nativePluginUuid,
     })
     void pollNativeLoop()
     return id
@@ -1628,22 +2543,32 @@ function otoolsCompatBootstrap(config: {
   const unregisterEventListener = (payload) => {
     const eventId = Number(payload && payload.eventId)
     if (Number.isFinite(eventId)) {
-      eventListeners.delete(eventId)
+      const listener = eventListeners.get(eventId)
+      if (listener) {
+        releaseNativePluginPoll(listener.nativePluginUuid)
+        eventListeners.delete(eventId)
+      }
     }
   }
 
   const emitLocalEvent = (payload) => {
+    dispatchLocalOtoolsEvent(
+      payload && payload.event,
+      readEventPayload(payload),
+      payload && payload.target
+    )
+  }
+
+  const emitSharedEvent = (payload) => {
     const event = toStringSafe(payload && payload.event).trim()
-    if (!event) return
-    const data = {
-      event,
-      id: -1,
-      payload: payload ? (payload.payload ?? null) : null,
+    if (!event) {
+      return
     }
-    for (const listener of eventListeners.values()) {
-      if (listener.event !== event) continue
-      fireTransformCallback(listener.handlerId, data)
-    }
+
+    const eventPayload = readEventPayload(payload)
+    const target = payload && payload.target
+    dispatchLocalOtoolsEvent(event, eventPayload, target)
+    broadcastCrossWindowEvent(event, eventPayload, target)
   }
 
   const tauriInvoke = async (command, payload) => {
@@ -1655,7 +2580,7 @@ function otoolsCompatBootstrap(config: {
         return
       case "plugin:event|emit":
       case "plugin:event|emit_to":
-        emitLocalEvent(payload)
+        emitSharedEvent(payload)
         return
       default:
         return postInvoke(command, payload ?? {})
@@ -1707,8 +2632,11 @@ function otoolsCompatBootstrap(config: {
   }
 
   const shell = {
-    open(path) {
-      return tauriInvoke("__otools_open_path", { path: toStringSafe(path) })
+    open(path, openWith) {
+      return tauriInvoke("__otools_shell_open", {
+        path: toStringSafe(path),
+        with: openWith ? toStringSafe(openWith) : undefined,
+      })
     },
     openPath(path) {
       return tauriInvoke("__otools_open_path", { path: toStringSafe(path) })
@@ -1817,6 +2745,9 @@ function otoolsCompatBootstrap(config: {
           ? toStringSafe(clickFeatureCode)
           : null,
       }).catch(() => {})
+    },
+    shellOpen(path, openWith) {
+      return shell.open(path, openWith)
     },
     shellOpenPath(path) {
       const value = toStringSafe(path).trim()
@@ -2189,21 +3120,28 @@ function otoolsCompatBootstrap(config: {
 
   window.__OToolsEnv = env
   window.__TAURI_INTERNALS__ = window.__TAURI_INTERNALS__ || {}
+  window.__TAURI_INTERNALS__.plugins = window.__TAURI_INTERNALS__.plugins || {}
+  window.__TAURI_INTERNALS__.plugins.path =
+    window.__TAURI_INTERNALS__.plugins.path || {
+      sep: currentPlatform === "windows" ? "\\" : "/",
+      delimiter: currentPlatform === "windows" ? ";" : ":",
+    }
   window.__TAURI_INTERNALS__.invoke = tauriInvoke
   window.__TAURI_INTERNALS__.transformCallback = transformCallback
   window.__TAURI_INTERNALS__.unregisterCallback = unregisterCallback
-  window.__TAURI_INTERNALS__.convertFileSrc = (filePath) => filePath
+  window.__TAURI_INTERNALS__.convertFileSrc = convertHostFileSrc
   window.__TAURI_INTERNALS__.metadata = {
     currentWebview: { label: windowLabel },
     currentWindow: { label: windowLabel },
   }
+  window.__CODEG_OTOOLS_WINDOW_LABEL__ = windowLabel
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ =
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ || {}
   window.__TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener = (
     _event,
     eventId
   ) => {
-    eventListeners.delete(Number(eventId))
+    unregisterEventListener({ eventId })
   }
 
   window.__OToolsHostInvoke = tauriInvoke
@@ -2298,6 +3236,477 @@ function readHostWindowState(): OtoolsHostWindowState {
         ? raw.activeLabel.trim()
         : null,
   }
+}
+
+function readCurrentOtoolsWindowLabel(): string {
+  const raw = (
+    window as Window & { __CODEG_OTOOLS_WINDOW_LABEL__?: string }
+  ).__CODEG_OTOOLS_WINDOW_LABEL__
+
+  return typeof raw === "string" && raw.trim() ? raw.trim() : WINDOW_LABEL
+}
+
+function listCurrentOtoolsWindowLabels(): string[] {
+  return Array.from(
+    new Set([
+      ...readHostWindowState().tabLabels,
+      readCurrentOtoolsWindowLabel(),
+    ].filter(Boolean))
+  )
+}
+
+function readWindowOptions(payload: unknown): Record<string, unknown> {
+  return asRecord(asRecord(payload)?.options ?? payload) ?? {}
+}
+
+function readOptionalNumberValue(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") {
+    return null
+  }
+
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function readWindowNumberOption(payload: unknown, field: string): number | null {
+  const options = readWindowOptions(payload)
+  return readOptionalNumberValue(options[field])
+}
+
+function readWindowBooleanOption(
+  payload: unknown,
+  field: string
+): boolean | null {
+  const options = readWindowOptions(payload)
+  const raw = options[field]
+
+  if (typeof raw === "boolean") {
+    return raw
+  }
+
+  if (typeof raw === "string") {
+    const normalized = raw.trim().toLowerCase()
+    if (normalized === "true" || normalized === "1") {
+      return true
+    }
+    if (normalized === "false" || normalized === "0") {
+      return false
+    }
+  }
+
+  return null
+}
+
+function readWindowStringOption(payload: unknown, field: string): string | null {
+  const options = readWindowOptions(payload)
+  const raw = options[field]
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null
+}
+
+function buildOtoolsRuntimeWindowUrl(
+  pluginUuid: string,
+  payload: unknown
+): string | null {
+  const label = readWindowStringOption(payload, "label")
+  const title = readWindowStringOption(payload, "title")
+  const rawUrl = readWindowStringOption(payload, "url")
+
+  if (rawUrl && /^(data|blob|file):/i.test(rawUrl)) {
+    return rawUrl
+  }
+
+  const params = new URLSearchParams()
+  params.set("pluginUuid", pluginUuid)
+
+  if (label) {
+    params.set("windowLabel", label)
+  }
+  if (title) {
+    params.set("title", title)
+  }
+
+  if (!rawUrl) {
+    return `/otools/runtime?${params.toString()}`
+  }
+
+  try {
+    const parsed = new URL(rawUrl, window.location.origin)
+    if (!/^https?:$/i.test(parsed.protocol) || parsed.origin !== window.location.origin) {
+      return rawUrl
+    }
+
+    if (parsed.pathname.startsWith("/otools/runtime")) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`
+    }
+
+    const marker = `/otools-assets/${pluginUuid}/`
+    const index = parsed.pathname.indexOf(marker)
+    if (index >= 0) {
+      params.set(
+        "entryPath",
+        decodeURIComponent(parsed.pathname.slice(index + marker.length))
+      )
+    }
+
+    params.set("sourceUrl", parsed.toString())
+    parsed.searchParams.forEach((value, key) => {
+      if (!OTOOLS_RUNTIME_RESERVED_QUERY_KEYS.has(key)) {
+        params.append(key, value)
+      }
+    })
+
+    return `/otools/runtime?${params.toString()}`
+  } catch {
+    return rawUrl
+  }
+}
+
+async function openOtoolsShimWindow(
+  pluginUuid: string,
+  payload: unknown
+): Promise<boolean> {
+  const label =
+    readWindowStringOption(payload, "label") ||
+    `otools-${pluginUuid}-${Date.now()}`
+  const title =
+    readWindowStringOption(payload, "title") || document.title || "OTools"
+  const url = buildOtoolsRuntimeWindowUrl(pluginUuid, payload)
+
+  if (!url) {
+    throw new Error("window url is required")
+  }
+
+  if (isDesktop()) {
+    await getShellTransport().call("open_otools_webview_window", {
+      remoteConnectionId: getActiveRemoteConnectionId(),
+      request: {
+        label,
+        title,
+        url,
+        width: readWindowNumberOption(payload, "width"),
+        height: readWindowNumberOption(payload, "height"),
+        minWidth: readWindowNumberOption(payload, "minWidth"),
+        minHeight: readWindowNumberOption(payload, "minHeight"),
+        center: readWindowBooleanOption(payload, "center"),
+        resizable: readWindowBooleanOption(payload, "resizable"),
+        focus: readWindowBooleanOption(payload, "focus"),
+        decorations: readWindowBooleanOption(payload, "decorations"),
+        transparent: readWindowBooleanOption(payload, "transparent"),
+        alwaysOnTop: readWindowBooleanOption(payload, "alwaysOnTop"),
+        titleBarStyle: readWindowStringOption(payload, "titleBarStyle"),
+        hiddenTitle: readWindowBooleanOption(payload, "hiddenTitle"),
+        trafficLightPosition:
+          asRecord(readWindowOptions(payload).trafficLightPosition) ?? null,
+      },
+    })
+    return true
+  }
+
+  const features = ["noopener=yes", "noreferrer=yes"]
+  const width = readWindowNumberOption(payload, "width")
+  const height = readWindowNumberOption(payload, "height")
+  const resizable = readWindowBooleanOption(payload, "resizable")
+
+  if (width !== null && width > 0) {
+    features.push(`width=${Math.round(width)}`)
+  }
+  if (height !== null && height > 0) {
+    features.push(`height=${Math.round(height)}`)
+  }
+  if (resizable !== null) {
+    features.push(`resizable=${resizable ? "yes" : "no"}`)
+  }
+
+  const opened = window.open(url, label, features.join(","))
+  if (!opened) {
+    window.location.href = url
+  }
+
+  return true
+}
+
+function extractInvokeValue(payload: unknown): unknown {
+  const record = asRecord(payload)
+  return record && "value" in record ? record.value : payload
+}
+
+type OtoolsWindowMethod = (...args: unknown[]) => unknown
+type OtoolsWindowHandle = Record<string, unknown>
+type OtoolsWindowCallResult = {
+  handled: boolean
+  value: unknown
+}
+
+async function getOtoolsWindowHandle(
+  payload?: unknown
+): Promise<OtoolsWindowHandle | null> {
+  const label = readStringField(payload, "label").trim()
+  if (label && isDesktop() && getActiveRemoteConnectionId() === null) {
+    try {
+      const { Window: TauriWindow } = await import("@tauri-apps/api/window")
+      const targetWindow = await TauriWindow.getByLabel(label)
+      if (targetWindow) {
+        return targetWindow as unknown as OtoolsWindowHandle
+      }
+    } catch {}
+  }
+
+  const currentWindow = await getCurrentWindow()
+  return currentWindow
+    ? (currentWindow as unknown as OtoolsWindowHandle)
+    : null
+}
+
+async function callOtoolsWindowMethod(
+  payload: unknown,
+  methodName: string,
+  ...args: unknown[]
+): Promise<OtoolsWindowCallResult> {
+  const targetWindow = await getOtoolsWindowHandle(payload)
+  const method = targetWindow?.[methodName]
+  if (typeof method === "function") {
+    return {
+      handled: true,
+      value: await (method as OtoolsWindowMethod).apply(targetWindow, args),
+    }
+  }
+  return {
+    handled: false,
+    value: undefined,
+  }
+}
+
+async function showCurrentOtoolsWindow(payload?: unknown): Promise<void> {
+  const result = await callOtoolsWindowMethod(payload, "show")
+  if (!result.handled) {
+    window.focus()
+  }
+}
+
+async function hideCurrentOtoolsWindow(payload?: unknown): Promise<void> {
+  await callOtoolsWindowMethod(payload, "hide")
+}
+
+async function minimizeCurrentOtoolsWindow(payload?: unknown): Promise<void> {
+  await callOtoolsWindowMethod(payload, "minimize")
+}
+
+async function unminimizeCurrentOtoolsWindow(payload?: unknown): Promise<void> {
+  await callOtoolsWindowMethod(payload, "unminimize")
+}
+
+async function maximizeCurrentOtoolsWindow(payload?: unknown): Promise<void> {
+  await callOtoolsWindowMethod(payload, "maximize")
+}
+
+async function unmaximizeCurrentOtoolsWindow(payload?: unknown): Promise<void> {
+  await callOtoolsWindowMethod(payload, "unmaximize")
+}
+
+async function toggleCurrentOtoolsWindowMaximize(
+  payload?: unknown
+): Promise<void> {
+  await callOtoolsWindowMethod(payload, "toggleMaximize")
+}
+
+async function focusCurrentOtoolsWindow(payload?: unknown): Promise<void> {
+  const result = await callOtoolsWindowMethod(payload, "setFocus")
+  if (!result.handled) {
+    window.focus()
+  }
+}
+
+async function closeCurrentOtoolsWindow(
+  payload?: unknown,
+  force = false
+): Promise<void> {
+  if (!isDesktop()) {
+    try {
+      window.close()
+    } catch {}
+    if (window.closed) {
+      return
+    }
+  }
+
+  const result = await callOtoolsWindowMethod(
+    payload,
+    force ? "destroy" : "close"
+  )
+  if (!result.handled) {
+    await closeCurrentWindow()
+  }
+}
+
+async function centerCurrentOtoolsWindow(payload?: unknown): Promise<void> {
+  await callOtoolsWindowMethod(payload, "center")
+}
+
+async function getCurrentOtoolsWindowScaleFactor(
+  payload?: unknown
+): Promise<number> {
+  const { value: scale } = await callOtoolsWindowMethod(payload, "scaleFactor")
+  return Number(scale || window.devicePixelRatio || 1)
+}
+
+async function getCurrentOtoolsWindowOuterPosition(payload?: unknown): Promise<{
+  x: number
+  y: number
+}> {
+  const result = await callOtoolsWindowMethod(payload, "outerPosition")
+  const position = asRecord(result.value)
+  if (position) {
+    return {
+      x: Number(position.x || 0),
+      y: Number(position.y || 0),
+    }
+  }
+  return {
+    x: Number(
+      window.screenX ||
+        (window as Window & { screenLeft?: number }).screenLeft ||
+        0
+    ),
+    y: Number(
+      window.screenY || (window as Window & { screenTop?: number }).screenTop || 0
+    ),
+  }
+}
+
+async function getCurrentOtoolsWindowInnerPosition(payload?: unknown): Promise<{
+  x: number
+  y: number
+}> {
+  const result = await callOtoolsWindowMethod(payload, "innerPosition")
+  const position = asRecord(result.value)
+  if (position) {
+    return {
+      x: Number(position.x || 0),
+      y: Number(position.y || 0),
+    }
+  }
+  return getCurrentOtoolsWindowOuterPosition(payload)
+}
+
+async function getCurrentOtoolsWindowInnerSize(payload?: unknown): Promise<{
+  width: number
+  height: number
+}> {
+  const result = await callOtoolsWindowMethod(payload, "innerSize")
+  const size = asRecord(result.value)
+  if (size) {
+    return {
+      width: Number(size.width || window.innerWidth || 0),
+      height: Number(size.height || window.innerHeight || 0),
+    }
+  }
+  return {
+    width: window.innerWidth || 0,
+    height: window.innerHeight || 0,
+  }
+}
+
+async function getCurrentOtoolsWindowOuterSize(payload?: unknown): Promise<{
+  width: number
+  height: number
+}> {
+  const result = await callOtoolsWindowMethod(payload, "outerSize")
+  const size = asRecord(result.value)
+  if (size) {
+    return {
+      width: Number(size.width || window.outerWidth || window.innerWidth || 0),
+      height: Number(size.height || window.outerHeight || window.innerHeight || 0),
+    }
+  }
+  return {
+    width: window.outerWidth || window.innerWidth || 0,
+    height: window.outerHeight || window.innerHeight || 0,
+  }
+}
+
+function readInvokeBooleanValue(payload: unknown): boolean {
+  return readBooleanField(extractInvokeValue(payload), "value")
+}
+
+async function setCurrentOtoolsWindowBooleanMethod(
+  payload: unknown,
+  methodName: string
+): Promise<void> {
+  await callOtoolsWindowMethod(payload, methodName, readInvokeBooleanValue(payload))
+}
+
+async function setCurrentOtoolsWindowAlwaysOnTop(payload: unknown): Promise<void> {
+  await setCurrentOtoolsWindowBooleanMethod(payload, "setAlwaysOnTop")
+}
+
+async function setCurrentOtoolsWindowIgnoreCursorEvents(
+  payload: unknown
+): Promise<void> {
+  await setCurrentOtoolsWindowBooleanMethod(payload, "setIgnoreCursorEvents")
+}
+
+async function setCurrentOtoolsWindowPosition(payload: unknown): Promise<void> {
+  const value = extractInvokeValue(payload)
+  if (value && typeof value === "object") {
+    await callOtoolsWindowMethod(payload, "setPosition", value)
+  }
+}
+
+async function setCurrentOtoolsWindowSize(payload: unknown): Promise<void> {
+  const value = extractInvokeValue(payload)
+  if (value && typeof value === "object") {
+    await callOtoolsWindowMethod(payload, "setSize", value)
+  }
+}
+
+async function setCurrentOtoolsWindowTitle(payload: unknown): Promise<void> {
+  const title = String(extractInvokeValue(payload) ?? "").trim()
+  if (!title) {
+    return
+  }
+  if (
+    !readStringField(payload, "label").trim() ||
+    readStringField(payload, "label").trim() === readCurrentOtoolsWindowLabel()
+  ) {
+    document.title = title
+  }
+  await callOtoolsWindowMethod(payload, "setTitle", title)
+}
+
+async function setCurrentOtoolsWindowVisibleOnAllWorkspaces(
+  payload: unknown
+): Promise<void> {
+  await setCurrentOtoolsWindowBooleanMethod(
+    payload,
+    "setVisibleOnAllWorkspaces"
+  )
+}
+
+function getCurrentOtoolsWindowTheme(): "dark" | "light" {
+  if (
+    document.documentElement.classList.contains("dark") ||
+    document.documentElement.dataset.theme === "dark"
+  ) {
+    return "dark"
+  }
+  return "light"
+}
+
+async function requestCurrentOtoolsWindowAttention(
+  payload: unknown
+): Promise<void> {
+  await callOtoolsWindowMethod(
+    payload,
+    "requestUserAttention",
+    extractInvokeValue(payload)
+  )
+}
+
+async function setCurrentOtoolsWindowNoopMethod(
+  payload: unknown,
+  methodName: string
+): Promise<void> {
+  await callOtoolsWindowMethod(payload, methodName, extractInvokeValue(payload))
 }
 
 function normalizeNotificationDetail(
@@ -2404,6 +3813,31 @@ function readNumberField(
   return Math.max(1, Math.floor(raw))
 }
 
+function readBooleanField(payload: unknown, field: string): boolean {
+  const record = asRecord(payload)
+  const direct = record?.[field]
+
+  if (typeof direct === "boolean") {
+    return direct
+  }
+
+  if (typeof direct === "string") {
+    const normalized = direct.trim().toLowerCase()
+    if (normalized === "true" || normalized === "1") {
+      return true
+    }
+    if (normalized === "false" || normalized === "0") {
+      return false
+    }
+  }
+
+  if (typeof payload === "boolean") {
+    return payload
+  }
+
+  return false
+}
+
 function readStringArrayField(payload: unknown, field: string): string[] {
   const record = asRecord(payload)
   const direct = record?.[field]
@@ -2493,29 +3927,58 @@ function extractWebviewPickOptions(payload: unknown): {
   }
 }
 
-async function pickFiles(payload: unknown): Promise<string | string[] | null> {
-  const options = extractWebviewPickOptions(payload)
-  return openFileDialog({
-    defaultPath: options.directory,
-    multiple: options.multiple,
-    title: options.title,
-  })
+async function pickHostFiles(payload: unknown): Promise<unknown[]> {
+  const paths = await pickHostFilePaths(payload)
+  const files: unknown[] = []
+  for (const path of paths) {
+    files.push(await getHostFileMeta(path))
+  }
+  return files
 }
 
-async function pickFolder(payload: unknown): Promise<{ path: string } | null> {
+async function pickHostFilePaths(payload: unknown): Promise<string[]> {
   const options = extractWebviewPickOptions(payload)
-  const result = await openFileDialog({
-    defaultPath: options.directory,
-    directory: true,
-    title: options.title,
-  })
-  const path = Array.isArray(result) ? result[0] : result
-  return typeof path === "string" && path.trim() ? { path: path.trim() } : null
+  if (isDesktop() && getActiveRemoteConnectionId() === null) {
+    return normalizePickedPathList(
+      await openFileDialog({
+        defaultPath: options.directory,
+        multiple: options.multiple,
+        title: options.title,
+      }),
+      options.multiple === true
+    )
+  }
+
+  const raw = window.prompt(
+    options.title ?? "Enter host file path",
+    options.directory ?? ""
+  )
+  const paths = splitPromptPaths(raw)
+  return options.multiple ? paths : paths.slice(0, 1)
 }
 
-async function pickSavePath(
+async function pickHostFolder(
   payload: unknown
-): Promise<{ path: string } | null> {
+): Promise<{ path: string; name: string } | null> {
+  const options = extractWebviewPickOptions(payload)
+  const result =
+    isDesktop() && getActiveRemoteConnectionId() === null
+      ? await openFileDialog({
+          defaultPath: options.directory,
+          directory: true,
+          title: options.title,
+        })
+      : window.prompt(
+          options.title ?? "Enter host folder path",
+          options.directory ?? ""
+        )
+  const path = normalizePickedPathList(result, false)[0]
+  return path ? buildHostPathEntry(path, "folder") : null
+}
+
+async function pickHostSavePath(
+  payload: unknown
+): Promise<{ path: string; name: string } | null> {
   const options = extractWebviewPickOptions(payload)
   const defaultPath = options.suggestedName
     ? [options.directory, options.suggestedName].filter(Boolean).join("/")
@@ -2524,7 +3987,191 @@ async function pickSavePath(
     defaultPath,
     title: options.title,
   })
-  return path ? { path } : null
+  return path ? buildHostPathEntry(path, "file") : null
+}
+
+function normalizePickedPathList(
+  result: string | string[] | null,
+  multiple: boolean
+): string[] {
+  const paths = Array.isArray(result)
+    ? result
+    : typeof result === "string"
+      ? [result]
+      : []
+  const normalized = paths.map((item) => item.trim()).filter(Boolean)
+  return multiple ? normalized : normalized.slice(0, 1)
+}
+
+function splitPromptPaths(raw: string | null): string[] {
+  return String(raw || "")
+    .split(/[\n;]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+async function getHostFileMeta(path: string): Promise<unknown> {
+  try {
+    const meta = await getTransport().call("tools_webview_file_meta", { path })
+    const record = asRecord(meta)
+    if (record && typeof record.path === "string" && record.path.trim()) {
+      return {
+        path: record.path,
+        name:
+          typeof record.name === "string" && record.name.trim()
+            ? record.name
+            : readHostPathName(path, "file"),
+        size: typeof record.size === "number" ? record.size : 0,
+        mime:
+          typeof record.mime === "string" && record.mime.trim()
+            ? record.mime
+            : "application/octet-stream",
+        lastModified:
+          typeof record.lastModified === "number" ? record.lastModified : null,
+      }
+    }
+  } catch {}
+
+  return {
+    path,
+    name: readHostPathName(path, "file"),
+    size: 0,
+    mime: "application/octet-stream",
+    lastModified: null,
+  }
+}
+
+function buildHostPathEntry(
+  path: string,
+  fallbackName: string
+): { path: string; name: string } {
+  return {
+    path,
+    name: readHostPathName(path, fallbackName),
+  }
+}
+
+function readHostPathName(path: string, fallbackName: string): string {
+  const normalized = path.trim().replace(/[\\/]+$/, "")
+  const parts = normalized.split(/[\\/]+/)
+  return parts[parts.length - 1]?.trim() || normalized || fallbackName
+}
+
+async function openOtoolsFileDialog(
+  payload: unknown
+): Promise<string | string[] | null> {
+  const options = extractDialogOpenOptions(payload)
+  if (isDesktop() && getActiveRemoteConnectionId() === null) {
+    return openFileDialog(options)
+  }
+
+  const label = options.directory ? "directory" : "file"
+  const raw = window.prompt(
+    options.title ?? `Enter host ${label} path`,
+    options.defaultPath ?? ""
+  )
+  if (!raw?.trim()) {
+    return null
+  }
+
+  const paths = raw
+    .split(/[\n;]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  if (!paths.length) {
+    return null
+  }
+
+  return options.multiple ? paths : paths[0]
+}
+
+function readShellOpenTarget(payload: unknown): string {
+  return (
+    readStringField(payload, "path") ||
+    readStringField(payload, "url") ||
+    readStringField(payload, "href")
+  ).trim()
+}
+
+function isExternalShellTarget(target: string): boolean {
+  if (/^[a-zA-Z]:[\\/]/.test(target)) {
+    return false
+  }
+
+  return /^[a-z][a-z0-9+.-]*:/i.test(target)
+}
+
+async function openOtoolsShellExternal(url: string): Promise<void> {
+  const target = url.trim()
+  if (!target) {
+    throw new Error("url is required")
+  }
+
+  try {
+    await getTransport().call("otools_shell_open_external", { url: target })
+  } catch {
+    await openUrl(target)
+  }
+}
+
+async function openOtoolsShellPath(path: string): Promise<void> {
+  const target = path.trim()
+  if (!target) {
+    throw new Error("path is required")
+  }
+
+  try {
+    await getTransport().call("otools_shell_open_path", { path: target })
+  } catch {
+    await openPath(target)
+  }
+}
+
+async function revealOtoolsShellPath(path: string): Promise<void> {
+  const target = path.trim()
+  if (!target) {
+    throw new Error("path is required")
+  }
+
+  try {
+    await getTransport().call("otools_shell_show_item_in_folder", {
+      path: target,
+    })
+  } catch {
+    await revealItemInDir(target)
+  }
+}
+
+async function trashOtoolsShellPath(path: string): Promise<boolean> {
+  const target = path.trim()
+  if (!target) {
+    throw new Error("path is required")
+  }
+
+  await getTransport().call("otools_shell_trash_item", { path: target })
+  return true
+}
+
+async function beepOtoolsShell(): Promise<void> {
+  try {
+    await getTransport().call("otools_shell_beep")
+  } catch {
+    return
+  }
+}
+
+async function openOtoolsShellTarget(payload: unknown): Promise<void> {
+  const target = readShellOpenTarget(payload)
+  if (!target) {
+    throw new Error("path is required")
+  }
+
+  if (isExternalShellTarget(target)) {
+    await openOtoolsShellExternal(target)
+    return
+  }
+
+  await openOtoolsShellPath(target)
 }
 
 async function saveDialog(options: {

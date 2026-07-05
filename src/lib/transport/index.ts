@@ -57,6 +57,10 @@ export function getActiveRemoteConnectionId(): number | null {
   return _remoteConfig?.id ?? null
 }
 
+export function getActiveRemoteToken(): string | null {
+  return _remoteConfig?.token ?? null
+}
+
 export function getTransport(): Transport {
   return _remoteTransport ?? getShellTransport()
 }

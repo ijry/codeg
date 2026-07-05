@@ -695,6 +695,7 @@ export function OtoolsShell() {
               onRefresh={() => void loadPlugins()}
               plugin={activePlugin}
               plugins={plugins}
+              windowLabel={activeTab.windowLabel}
             />
           ) : (
             <EmptyState
@@ -849,6 +850,7 @@ function OtoolsPluginView({
   onRefresh,
   plugin,
   plugins,
+  windowLabel,
 }: {
   hostInfo: OtoolsHostInfo | null
   loading: boolean
@@ -858,6 +860,7 @@ function OtoolsPluginView({
   onRefresh: () => void
   plugin: OtoolsPluginInfo
   plugins: OtoolsPluginInfo[]
+  windowLabel: string
 }) {
   const builtinView = renderBuiltinPluginView(plugin, {
     hostInfo,
@@ -891,7 +894,11 @@ function OtoolsPluginView({
           Open
         </Button>
       </div>
-      <OtoolsPluginFrame hostInfo={hostInfo} plugin={plugin} />
+      <OtoolsPluginFrame
+        hostInfo={hostInfo}
+        plugin={plugin}
+        windowLabel={windowLabel}
+      />
     </>
   )
 }

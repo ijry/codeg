@@ -1,3 +1,5 @@
+#[cfg(feature = "tauri-runtime")]
+use serde::Deserialize;
 use serde_json::Value;
 #[cfg(feature = "tauri-runtime")]
 use std::path::{Path, PathBuf};
@@ -12,7 +14,8 @@ pub use otools_host::{
     OtoolsNativeInvokeRequest, OtoolsPluginCommandInvokeRequest,
     OtoolsNavigationResult, OtoolsPluginInfo, ParkInstallInput, ParkInstallResult,
     ParkUninstallInput, ParkUninstallResult, ParkWorkspace, ProjectScriptsResponse, SavedImage,
-    WebviewDirEntry, WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
+    WebviewDirEntry, WebviewFileMeta, WebviewReadFilePayload, WebviewRenameEntryRequest,
+    WebviewWriteFileRequest,
 };
 #[cfg(feature = "tauri-runtime")]
 pub use otools_platform_shortcuts::OtoolsGlobalShortcutBinding;
@@ -22,6 +25,36 @@ pub fn open_otools_window_core() -> OtoolsNavigationResult {
 }
 
 pub fn otools_show_main_window_core() {}
+
+#[cfg(feature = "tauri-runtime")]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtoolsWindowPositionInput {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenOtoolsWebviewWindowRequest {
+    pub label: String,
+    pub title: Option<String>,
+    pub url: String,
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+    pub min_width: Option<f64>,
+    pub min_height: Option<f64>,
+    pub center: Option<bool>,
+    pub resizable: Option<bool>,
+    pub focus: Option<bool>,
+    pub decorations: Option<bool>,
+    pub transparent: Option<bool>,
+    pub always_on_top: Option<bool>,
+    pub title_bar_style: Option<String>,
+    pub hidden_title: Option<bool>,
+    pub traffic_light_position: Option<OtoolsWindowPositionInput>,
+}
 
 #[cfg(feature = "tauri-runtime")]
 fn otools_status_bar_text(value: Option<&Value>) -> Option<String> {
@@ -99,6 +132,138 @@ fn apply_otools_status_bar_state(payload: &Value) -> Result<(), AppCommandError>
 }
 
 #[cfg(feature = "tauri-runtime")]
+fn append_otools_query_param(route: String, key: &str, value: &str) -> String {
+    let encoded = urlencoding::encode(value);
+    if route.contains('?') {
+        format!("{route}&{key}={encoded}")
+    } else {
+        format!("{route}?{key}={encoded}")
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn append_otools_remote_context(
+    route: String,
+    remote_connection_id: Option<i32>,
+    remote_window_id: Option<&str>,
+) -> String {
+    let Some(id) = remote_connection_id else {
+        return route;
+    };
+
+    let route = append_otools_query_param(route, "remoteConnectionId", &id.to_string());
+    match remote_window_id {
+        Some(window_id) if !window_id.is_empty() => {
+            append_otools_query_param(route, "remoteWindowId", window_id)
+        }
+        _ => route,
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn resolve_otools_window_target(
+    target: &str,
+    remote_connection_id: Option<i32>,
+) -> Result<(tauri::WebviewUrl, Option<String>, bool), AppCommandError> {
+    let normalized = target.trim();
+    if normalized.is_empty() {
+        return Err(AppCommandError::invalid_input("url is required"));
+    }
+
+    if let Ok(external) = url::Url::parse(normalized) {
+        return match external.scheme() {
+            "http" | "https" => Ok((tauri::WebviewUrl::External(external), None, false)),
+            _ => Err(AppCommandError::invalid_input(format!(
+                "unsupported OTools window url scheme: {}",
+                external.scheme()
+            ))),
+        };
+    }
+
+    let remote_window_id = remote_connection_id
+        .map(|_| crate::commands::remote_workspace::new_remote_window_instance_id());
+    let route = append_otools_remote_context(
+        normalized.trim_start_matches('/').to_string(),
+        remote_connection_id,
+        remote_window_id.as_deref(),
+    );
+    Ok((tauri::WebviewUrl::App(route.into()), remote_window_id, true))
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn apply_otools_window_request<'a, R, M>(
+    mut builder: tauri::WebviewWindowBuilder<'a, R, M>,
+    request: &OpenOtoolsWebviewWindowRequest,
+) -> tauri::WebviewWindowBuilder<'a, R, M>
+where
+    R: tauri::Runtime,
+    M: tauri::Manager<R>,
+{
+    if request.width.is_some() || request.height.is_some() {
+        builder = builder.inner_size(
+            request.width.unwrap_or(1040.0),
+            request.height.unwrap_or(760.0),
+        );
+    }
+
+    if request.min_width.is_some() || request.min_height.is_some() {
+        builder = builder.min_inner_size(
+            request.min_width.unwrap_or(640.0),
+            request.min_height.unwrap_or(480.0),
+        );
+    }
+
+    if request.center.unwrap_or(true) {
+        builder = builder.center();
+    }
+
+    if let Some(resizable) = request.resizable {
+        builder = builder.resizable(resizable);
+    }
+
+    if let Some(decorations) = request.decorations {
+        builder = builder.decorations(decorations);
+    }
+
+    if let Some(transparent) = request.transparent {
+        builder = builder.transparent(transparent);
+    }
+
+    if let Some(always_on_top) = request.always_on_top {
+        builder = builder.always_on_top(always_on_top);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(hidden_title) = request.hidden_title {
+            builder = builder.hidden_title(hidden_title);
+        }
+
+        if let Some(style) = request.title_bar_style.as_deref() {
+            builder = match style {
+                "overlay" => builder.title_bar_style(tauri::TitleBarStyle::Overlay),
+                "transparent" => builder.title_bar_style(tauri::TitleBarStyle::Transparent),
+                _ => builder,
+            };
+        }
+
+        if let Some(position) = &request.traffic_light_position {
+            builder = builder
+                .traffic_light_position(tauri::LogicalPosition::new(position.x, position.y));
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = &request.hidden_title;
+        let _ = &request.title_bar_style;
+        let _ = &request.traffic_light_position;
+    }
+
+    builder
+}
+
+#[cfg(feature = "tauri-runtime")]
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn open_otools_window(
     app: tauri::AppHandle,
@@ -147,6 +312,66 @@ pub async fn open_otools_window(
         }
     }
     let _ = window.set_focus();
+    Ok(())
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn open_otools_webview_window(
+    app: tauri::AppHandle,
+    request: OpenOtoolsWebviewWindowRequest,
+    remote_connection_id: Option<i32>,
+) -> Result<(), AppCommandError> {
+    use tauri::Manager;
+
+    let label = request.label.trim().to_string();
+    if label.is_empty() {
+        return Err(AppCommandError::invalid_input("label is required"));
+    }
+
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.unminimize();
+        existing.set_focus().map_err(|error| {
+            AppCommandError::window(
+                "Failed to focus existing OTools webview window",
+                error.to_string(),
+            )
+        })?;
+        return Ok(());
+    }
+
+    let title = request
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("OTools");
+    let (url, remote_window_id, is_app_window) =
+        resolve_otools_window_target(&request.url, remote_connection_id)?;
+    let builder = tauri::WebviewWindowBuilder::new(&app, &label, url).title(title);
+    let builder = apply_otools_window_request(builder, &request);
+    let builder = crate::commands::windows::apply_platform_window_style(builder);
+    let window = builder.build().map_err(|error| {
+        AppCommandError::window("Failed to open OTools webview window", error.to_string())
+    })?;
+    crate::commands::windows::post_window_setup(&window);
+
+    if is_app_window {
+        if let Some(remote_window_id) = remote_window_id {
+            if let Some(proxy) =
+                app.try_state::<std::sync::Arc<crate::commands::remote_proxy::RemoteProxyState>>()
+            {
+                proxy
+                    .inner()
+                    .register_window_instance_cleanup(&window, remote_window_id);
+            }
+        }
+    }
+
+    if request.focus.unwrap_or(true) {
+        let _ = window.set_focus();
+    }
+
     Ok(())
 }
 
@@ -953,6 +1178,13 @@ pub async fn tools_webview_read_file(
     path: String,
 ) -> Result<WebviewReadFilePayload, AppCommandError> {
     otools_host::tools_webview_read_file(path)
+        .await
+        .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn tools_webview_file_meta(path: String) -> Result<WebviewFileMeta, AppCommandError> {
+    otools_host::tools_webview_file_meta(path)
         .await
         .map_err(map_host_error)
 }

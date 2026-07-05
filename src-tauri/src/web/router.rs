@@ -30,6 +30,7 @@ pub fn build_router(
         .allow_headers(Any);
 
     let token_for_ws = token.clone();
+    let token_for_otools_host_file = token.clone();
 
     let api = Router::new()
         .route("/health", post(health_check))
@@ -565,6 +566,10 @@ pub fn build_router(
         .route(
             "/tools_webview_read_file",
             post(handlers::otools::tools_webview_read_file),
+        )
+        .route(
+            "/tools_webview_file_meta",
+            post(handlers::otools::tools_webview_file_meta),
         )
         .route(
             "/tools_webview_write_file",
@@ -1622,6 +1627,15 @@ pub fn build_router(
             auth::require_token(req, next, token_for_ws.clone())
         }));
 
+    let otools_host_file_route = Router::new()
+        .route(
+            "/__tauri_remote_service_file__",
+            get(handlers::otools::otools_host_file),
+        )
+        .layer(middleware::from_fn(move |req, next| {
+            auth::require_token_or_query(req, next, token_for_otools_host_file.clone())
+        }));
+
     // Static file serving.
     // Next.js static export produces "folder.html" for "/folder" route.
     // We use a middleware to rewrite "/folder" → "/folder.html" before ServeDir.
@@ -1663,6 +1677,7 @@ pub fn build_router(
     Router::new()
         .nest("/api", api)
         .merge(ws_route)
+        .merge(otools_host_file_route)
         .route(
             "/otools-assets/{plugin_uuid}/{*path}",
             get(handlers::otools::otools_asset),

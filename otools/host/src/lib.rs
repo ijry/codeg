@@ -29,10 +29,11 @@ pub use otools_platform_host::{
     otools_shell_beep, otools_shell_open_external, otools_shell_open_path,
     otools_shell_show_item_in_folder, otools_shell_trash_item, otools_show_notification,
     resolve_upload_static_path, tools_webview_browse_dialog, tools_webview_create_dir,
-    tools_webview_home_dir, tools_webview_join_path, tools_webview_list_dir, tools_webview_log,
-    tools_webview_read_file, tools_webview_remove_entry, tools_webview_rename_entry,
+    tools_webview_file_meta, tools_webview_home_dir, tools_webview_join_path,
+    tools_webview_list_dir, tools_webview_log, tools_webview_read_file,
+    tools_webview_remove_entry, tools_webview_rename_entry,
     tools_webview_touch_file, tools_webview_write_file, upload_save_image, SavedImage,
-    WebviewDirEntry, WebviewReadFilePayload,
+    WebviewDirEntry, WebviewFileMeta, WebviewReadFilePayload,
     WebviewRenameEntryRequest, WebviewWriteFileRequest,
 };
 pub use otools_plugin_config::{
@@ -164,6 +165,7 @@ pub async fn otools_host_info() -> Result<OtoolsHostInfo, HostError> {
 
 fn build_host_paths() -> BTreeMap<String, String> {
     let mut paths = BTreeMap::new();
+    let data_root = otools_core::default_data_dir();
 
     insert_path(&mut paths, "home", dirs::home_dir());
     insert_path(&mut paths, "desktop", dirs::desktop_dir());
@@ -172,13 +174,27 @@ fn build_host_paths() -> BTreeMap<String, String> {
     insert_path(&mut paths, "music", dirs::audio_dir());
     insert_path(&mut paths, "pictures", dirs::picture_dir());
     insert_path(&mut paths, "videos", dirs::video_dir());
+    insert_path(&mut paths, "cache", dirs::cache_dir());
+    insert_path(&mut paths, "config", dirs::config_dir());
+    insert_path(&mut paths, "data", dirs::data_dir());
+    insert_path(&mut paths, "localData", dirs::data_local_dir());
+    insert_path(&mut paths, "public", dirs::public_dir());
     insert_path(&mut paths, "appData", dirs::data_dir());
+    insert_path(&mut paths, "userData", Some(data_root.clone()));
+    insert_path(&mut paths, "appConfig", Some(data_root.join("config")));
+    insert_path(&mut paths, "appCache", Some(data_root.join("cache")));
+    insert_path(&mut paths, "temp", Some(std::env::temp_dir()));
     insert_path(
         &mut paths,
-        "userData",
-        Some(otools_core::default_data_dir()),
+        "resource",
+        std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|parent| parent.to_path_buf())),
     );
-    insert_path(&mut paths, "temp", Some(std::env::temp_dir()));
+    insert_path(&mut paths, "executable", dirs::executable_dir());
+    insert_path(&mut paths, "font", dirs::font_dir());
+    insert_path(&mut paths, "runtime", dirs::runtime_dir());
+    insert_path(&mut paths, "template", dirs::template_dir());
     insert_path(
         &mut paths,
         "logs",
