@@ -486,9 +486,10 @@ fn list_plugins_core() -> Result<Vec<OtoolsPluginInfo>, HostError> {
         .into_iter()
         .map(catalog::tool_plugin_to_info)
     {
-        if !plugins
+        if plugins
             .iter()
-            .any(|existing| existing.uuid == plugin.uuid || existing.packid == plugin.packid)
+            .position(|existing| same_plugin_identity(existing, &plugin))
+            .is_none()
         {
             plugins.push(plugin);
         }
@@ -504,9 +505,18 @@ fn list_plugins_core() -> Result<Vec<OtoolsPluginInfo>, HostError> {
                 continue;
             }
             if let Some(plugin) = read_plugin_manifest(&path)? {
-                if !plugins.iter().any(|existing| {
-                    existing.uuid == plugin.uuid || existing.packid == plugin.packid
-                }) {
+                if let Some(index) = plugins
+                    .iter()
+                    .position(|existing| same_plugin_identity(existing, &plugin))
+                {
+                    if plugins[index].source != "builtin" {
+                        let source = plugins[index].source.clone();
+                        plugins[index] = plugin;
+                        if !source.trim().is_empty() {
+                            plugins[index].source = source;
+                        }
+                    }
+                } else {
                     plugins.push(plugin);
                 }
             }
@@ -514,6 +524,13 @@ fn list_plugins_core() -> Result<Vec<OtoolsPluginInfo>, HostError> {
     }
     plugins.sort_by(|left, right| left.display_name.cmp(&right.display_name));
     Ok(plugins)
+}
+
+fn same_plugin_identity(left: &OtoolsPluginInfo, right: &OtoolsPluginInfo) -> bool {
+    left.uuid == right.uuid
+        || left.uuid == right.packid
+        || left.packid == right.uuid
+        || left.packid == right.packid
 }
 
 fn builtin_plugins() -> Vec<OtoolsPluginInfo> {
