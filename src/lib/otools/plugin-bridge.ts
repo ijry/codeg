@@ -51,6 +51,7 @@ import {
 import type {
   OtoolsBridgeRequest,
   OtoolsBridgeResponse,
+  OtoolsHostInfo,
   OtoolsPluginInfo,
 } from "./types"
 
@@ -561,11 +562,12 @@ function isPluginHostDispatcherMiss(error: unknown): boolean {
 
 export async function loadOtoolsPluginDocument(
   entryUrl: string,
-  plugin: OtoolsPluginInfo
+  plugin: OtoolsPluginInfo,
+  hostInfo?: OtoolsHostInfo | null
 ): Promise<string> {
   const html = await loadPluginAssetText(plugin.uuid, plugin.entry, entryUrl)
   const inlinedHtml = await inlinePluginDocumentAssets(html, entryUrl, plugin)
-  return injectCompatBridge(inlinedHtml, entryUrl, plugin.uuid)
+  return injectCompatBridge(inlinedHtml, entryUrl, plugin.uuid, hostInfo)
 }
 
 async function loadPluginAssetText(
@@ -1214,10 +1216,11 @@ async function saveNormalizedConfigValue(
 function injectCompatBridge(
   html: string,
   entryUrl: string,
-  pluginUuid: string
+  pluginUuid: string,
+  hostInfo?: OtoolsHostInfo | null
 ): string {
   const baseHref = new URL(".", entryUrl).toString()
-  const script = `<script id="codeg-otools-bridge">${buildCompatBridgeScript(pluginUuid)}</script>`
+  const script = `<script id="codeg-otools-bridge">${buildCompatBridgeScript(pluginUuid, hostInfo)}</script>`
   const base = `<base href="${escapeHtml(baseHref)}" />`
   const marker = `<meta name="codeg-otools-plugin" content="${escapeHtml(pluginUuid)}" />`
   const injected = `${base}${marker}${script}`
@@ -1236,20 +1239,19 @@ function injectCompatBridge(
   return `<!doctype html><html><head>${injected}</head><body>${html}</body></html>`
 }
 
-function buildCompatBridgeScript(pluginUuid: string): string {
+function buildCompatBridgeScript(
+  pluginUuid: string,
+  hostInfo?: OtoolsHostInfo | null
+): string {
   return `;(${otoolsCompatBootstrap.toString()})(${JSON.stringify({
-    appName: "codeg-plus",
-    appVersion: "0",
+    appName: hostInfo?.appName || "codeg-plus",
+    appVersion: hostInfo?.appVersion || "0",
+    isDev: hostInfo?.isDev === true,
     currentBrowserUrl:
       typeof window !== "undefined" ? window.location.href : "",
-    paths: {
-      home: "/",
-      desktop: "/desktop",
-      documents: "/documents",
-      downloads: "/downloads",
-      temp: "/tmp",
-      logs: "/logs",
-    },
+    nativeId: hostInfo?.nativeId || pluginUuid,
+    paths: hostInfo?.paths ?? {},
+    platform: hostInfo?.platform,
     pluginUuid,
     windowLabel: WINDOW_LABEL,
   })});`
@@ -1259,7 +1261,10 @@ function otoolsCompatBootstrap(config: {
   appName: string
   appVersion: string
   currentBrowserUrl: string
+  isDev?: boolean
+  nativeId?: string
   paths: Record<string, string>
+  platform?: string
   pluginUuid: string
   windowLabel: string
 }) {
@@ -1270,6 +1275,16 @@ function otoolsCompatBootstrap(config: {
   const pluginUuid = String(config.pluginUuid || "").trim()
   const windowLabel = String(config.windowLabel || "otools")
   const currentPlatform = (() => {
+    const hostPlatform = String(config.platform || "")
+      .trim()
+      .toLowerCase()
+    if (
+      hostPlatform === "macos" ||
+      hostPlatform === "windows" ||
+      hostPlatform === "linux"
+    ) {
+      return hostPlatform
+    }
     const platform = String(navigator.platform || "").toLowerCase()
     if (platform.includes("mac")) return "macos"
     if (platform.includes("win")) return "windows"
@@ -1290,10 +1305,10 @@ function otoolsCompatBootstrap(config: {
   const env = {
     appName: String(config.appName || "codeg-plus"),
     appVersion: String(config.appVersion || "0"),
-    nativeId: pluginUuid,
+    nativeId: String(config.nativeId || pluginUuid),
     pluginUuid,
     platform: currentPlatform,
-    isDev: false,
+    isDev: config.isDev === true,
     currentBrowserUrl:
       String(config.currentBrowserUrl || "").trim() || window.location.href,
     paths: config.paths && typeof config.paths === "object" ? config.paths : {},

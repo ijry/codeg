@@ -1,0 +1,13 @@
+[package]
+name = "otools-lifecycle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../core" }
+otools-platform-native = { path = "../platform/native" }
+otools-plugin-dev = { path = "../plugins/dev/host" }
+otools-plugin-park = { path = "../plugins/park/host" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "time", "sync"] }

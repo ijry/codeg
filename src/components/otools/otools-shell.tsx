@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { openUrl } from "@/lib/platform"
 import { getServerBaseUrl, getShellTransport, isDesktop } from "@/lib/transport"
 import {
   OTOOLS_HOST_CLOSE_TAB_EVENT,
@@ -261,6 +262,14 @@ export function OtoolsShell() {
   )
 
   const openPlugin = useCallback((plugin: OtoolsPluginInfo) => {
+    if (plugin.openInBrowser) {
+      void openUrl(buildOtoolsPluginUrl(plugin)).catch((err) => {
+        console.error("[otools] failed to open plugin in browser", err)
+        setError(err instanceof Error ? err.message : String(err))
+      })
+      return
+    }
+
     const nextTab = buildPluginTab(plugin)
     setTabs((currentTabs) => {
       const existingIndex = currentTabs.findIndex(
@@ -316,6 +325,19 @@ export function OtoolsShell() {
         plugins.find(
           (item) => item.uuid === pluginUuid || item.packid === pluginUuid
         ) ?? null
+
+      if (plugin?.openInBrowser) {
+        void openUrl(
+          String(detail.url || "").trim() || buildOtoolsPluginUrl(plugin)
+        ).catch((err) => {
+          console.error(
+            "[otools] failed to open host-managed plugin in browser",
+            err
+          )
+          setError(err instanceof Error ? err.message : String(err))
+        })
+        return
+      }
 
       const nextTab: ShellTab | null = plugin
         ? buildPluginTab(plugin, {
@@ -803,7 +825,7 @@ function OtoolsPluginView({
           Open
         </Button>
       </div>
-      <OtoolsPluginFrame plugin={plugin} />
+      <OtoolsPluginFrame hostInfo={hostInfo} plugin={plugin} />
     </>
   )
 }

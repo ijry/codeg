@@ -1200,6 +1200,7 @@ dependencies = [
  "ngrok",
  "notify",
  "otools-host",
+ "otools-lifecycle",
  "otools-platform-app",
  "otools-platform-shortcuts",
  "portable-pty",
@@ -4710,6 +4711,7 @@ name = "otools-host"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "dirs 6.0.0",
  "otools-ai",
  "otools-core",
  "otools-platform-filesystem",
@@ -4721,6 +4723,20 @@ dependencies = [
  "otools-plugin-state",
  "serde",
  "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "otools-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-platform-native",
+ "otools-plugin-dev",
+ "otools-plugin-park",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -4776,6 +4792,7 @@ dependencies = [
  "base64 0.22.1",
  "libloading 0.8.9",
  "otools-core",
+ "otools-plugin-state",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

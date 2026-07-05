@@ -444,6 +444,8 @@ async fn async_main() -> ExitCode {
         tokio::spawn(codeg_lib::automation::run_automation_engine(engine));
     }
 
+    codeg_lib::otools_lifecycle_runtime::spawn_otools_autostart_worker("server");
+
     // Sweep abandoned upload staging files from any prior run before
     // serving the first request. The quota log/validate ran earlier in
     // `main` so strict-mode misconfigurations abort before we touch
@@ -517,6 +519,7 @@ async fn async_main() -> ExitCode {
         tracing::error!("[SERVER] Server error: {}", e);
         return ExitCode::from(1);
     }
+    codeg_lib::otools_lifecycle_runtime::run_otools_shutdown_hooks_worker("server");
     // Graceful shutdown: release any live office watch preview servers
     // (kill_on_drop is the backstop, but this frees their ports promptly).
     codeg_lib::office_watch::stop_all_office_watches();

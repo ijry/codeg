@@ -7,13 +7,17 @@ import {
   installOtoolsFrameBridge,
   loadOtoolsPluginDocument,
 } from "@/lib/otools/plugin-bridge"
-import type { OtoolsPluginInfo } from "@/lib/otools/types"
+import type { OtoolsHostInfo, OtoolsPluginInfo } from "@/lib/otools/types"
 
 interface OtoolsPluginFrameProps {
+  hostInfo: OtoolsHostInfo | null
   plugin: OtoolsPluginInfo
 }
 
-export function OtoolsPluginFrame({ plugin }: OtoolsPluginFrameProps) {
+export function OtoolsPluginFrame({
+  hostInfo,
+  plugin,
+}: OtoolsPluginFrameProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const [frameState, setFrameState] = useState<{
     error: string | null
@@ -34,7 +38,7 @@ export function OtoolsPluginFrame({ plugin }: OtoolsPluginFrameProps) {
   useEffect(() => {
     let cancelled = false
 
-    loadOtoolsPluginDocument(src, plugin)
+    loadOtoolsPluginDocument(src, plugin, hostInfo)
       .then((html) => {
         if (cancelled) return
         setFrameState({
@@ -55,7 +59,7 @@ export function OtoolsPluginFrame({ plugin }: OtoolsPluginFrameProps) {
     return () => {
       cancelled = true
     }
-  }, [plugin, src])
+  }, [hostInfo, plugin, src])
 
   return (
     <div className="relative min-h-0 flex-1 bg-background">

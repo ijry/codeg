@@ -91,6 +91,9 @@ pub struct OtoolsPluginInfo {
 }
 
 pub fn default_data_dir() -> PathBuf {
+    if let Some(custom) = std::env::var_os("CODEG_DATA_DIR").filter(|value| !value.is_empty()) {
+        return PathBuf::from(custom);
+    }
     dirs::data_dir()
         .map(|dir| dir.join("codeg"))
         .unwrap_or_else(|| PathBuf::from(".codeg-data"))

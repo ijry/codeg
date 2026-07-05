@@ -244,9 +244,13 @@ pub async fn project_runner_read_scripts(
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_host_info() -> Result<OtoolsHostInfo, AppCommandError> {
-    otools_host::otools_host_info()
+    let mut info = otools_host::otools_host_info()
         .await
-        .map_err(map_host_error)
+        .map_err(map_host_error)?;
+    info.app_name = env!("CARGO_PKG_NAME").to_string();
+    info.app_version = env!("CARGO_PKG_VERSION").to_string();
+    info.is_dev = cfg!(debug_assertions);
+    Ok(info)
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]

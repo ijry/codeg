@@ -1,4 +1,5 @@
 use std::fs;
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -119,10 +120,15 @@ pub struct OtoolsAssetPayload {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OtoolsHostInfo {
+    pub app_name: String,
+    pub app_version: String,
     pub data_dir: String,
+    pub is_dev: bool,
+    pub native_id: String,
     pub plugin_roots: Vec<String>,
     pub plugin_count: usize,
     pub platform: String,
+    pub paths: BTreeMap<String, String>,
 }
 
 pub fn open_otools_window_core() -> OtoolsNavigationResult {
@@ -137,16 +143,73 @@ pub async fn otools_list_plugins() -> Result<Vec<OtoolsPluginInfo>, HostError> {
 
 pub async fn otools_host_info() -> Result<OtoolsHostInfo, HostError> {
     Ok(OtoolsHostInfo {
+        app_name: "codeg-plus".to_string(),
+        app_version: String::new(),
         data_dir: otools_core::default_data_dir()
             .to_string_lossy()
             .to_string(),
+        is_dev: cfg!(debug_assertions),
+        native_id: get_or_create_otools_native_id()?,
         plugin_roots: plugin_roots()
             .into_iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect(),
         plugin_count: list_plugins_core()?.len(),
         platform: std::env::consts::OS.to_string(),
+        paths: build_host_paths(),
     })
+}
+
+fn build_host_paths() -> BTreeMap<String, String> {
+    let mut paths = BTreeMap::new();
+
+    insert_path(&mut paths, "home", dirs::home_dir());
+    insert_path(&mut paths, "desktop", dirs::desktop_dir());
+    insert_path(&mut paths, "documents", dirs::document_dir());
+    insert_path(&mut paths, "downloads", dirs::download_dir());
+    insert_path(&mut paths, "music", dirs::audio_dir());
+    insert_path(&mut paths, "pictures", dirs::picture_dir());
+    insert_path(&mut paths, "videos", dirs::video_dir());
+    insert_path(&mut paths, "appData", dirs::data_dir());
+    insert_path(
+        &mut paths,
+        "userData",
+        Some(otools_core::default_data_dir()),
+    );
+    insert_path(&mut paths, "temp", Some(std::env::temp_dir()));
+    insert_path(
+        &mut paths,
+        "logs",
+        Some(otools_core::default_data_dir().join("logs")),
+    );
+
+    paths
+}
+
+fn insert_path(paths: &mut BTreeMap<String, String>, key: &str, value: Option<PathBuf>) {
+    let Some(path) = value else {
+        return;
+    };
+    paths.insert(key.to_string(), path.to_string_lossy().to_string());
+}
+
+fn get_or_create_otools_native_id() -> Result<String, HostError> {
+    let path = catalog::otools_root_dir().join("native-id.txt");
+
+    if let Ok(value) = fs::read_to_string(&path) {
+        let native_id = value.trim();
+        if !native_id.is_empty() {
+            return Ok(native_id.to_string());
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(HostError::io)?;
+    }
+
+    let native_id = uuid::Uuid::new_v4().to_string();
+    fs::write(&path, &native_id).map_err(HostError::io)?;
+    Ok(native_id)
 }
 
 pub async fn otools_get_plugin(plugin_uuid: String) -> Result<OtoolsPluginInfo, HostError> {

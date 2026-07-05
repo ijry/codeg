@@ -33,10 +33,15 @@ export interface OtoolsAiChatMessage {
 }
 
 export interface OtoolsHostInfo {
+  appName: string
+  appVersion: string
   dataDir: string
+  isDev: boolean
+  nativeId: string
   pluginRoots: string[]
   pluginCount: number
   platform: string
+  paths: Record<string, string>
 }
 
 export interface OtoolsConfigTab {

@@ -4,12 +4,15 @@ use std::fs;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use libloading::Library;
 use otools_core::catalog;
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE, SET_COOKIE,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -760,6 +763,7 @@ fn encode_host_response(value: Value, output_len: *mut usize) -> *mut u8 {
 fn dispatch_host_capability(capability: &str, request: Value) -> Result<Value, String> {
     match capability {
         "http.send" => host_http_send(request),
+        "http.normalize_request" => Ok(normalize_host_http_request(request)),
         "http.writeBase64File" | "http.write_base64_file" => {
             let path = request
                 .get("filePath")
@@ -785,67 +789,426 @@ fn dispatch_host_capability(capability: &str, request: Value) -> Result<Value, S
                 .map_err(|error| format!("write file failed {}: {error}", target.display()))?;
             Ok(Value::Null)
         }
+        "plugin_state.read" => {
+            let plugin = request_plugin_id(&request)?;
+            let scheme = request
+                .get("scheme")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            Ok(
+                otools_plugin_state::get_otools_plugin_localstate_with_scheme(plugin, scheme)
+                    .map_err(|error| error.to_string())?
+                    .unwrap_or(Value::Null),
+            )
+        }
+        "plugin_state.save_local" => {
+            let plugin = request_plugin_id(&request)?;
+            let scheme = request
+                .get("scheme")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let state = request
+                .get("state")
+                .cloned()
+                .ok_or_else(|| "state is required".to_string())?;
+            otools_plugin_state::save_otools_plugin_localstate_with_scheme(plugin, scheme, state)
+                .map_err(|error| error.to_string())?;
+            Ok(Value::Null)
+        }
         other => Err(format!("Unsupported host capability: {other}")),
     }
 }
 
-fn host_http_send(request: Value) -> Result<Value, String> {
-    let method = request
+fn normalize_host_http_request(request: Value) -> Value {
+    let mut object = match request {
+        Value::Object(object) => object,
+        _ => serde_json::Map::new(),
+    };
+
+    let method = object
         .get("method")
         .and_then(Value::as_str)
         .unwrap_or("GET")
         .trim()
         .to_ascii_uppercase();
-    let url = request
-        .get("url")
+    object.insert(
+        "method".to_string(),
+        Value::String(if method.is_empty() {
+            "GET".to_string()
+        } else {
+            method
+        }),
+    );
+
+    let body_type = object
+        .get("body_type")
+        .or_else(|| object.get("bodyType"))
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        .trim()
+        .to_ascii_lowercase();
+    let body_type = match body_type.as_str() {
+        "json" | "text" | "xml" | "form" | "binary" => body_type,
+        _ => "none".to_string(),
+    };
+    object.insert("body_type".to_string(), Value::String(body_type.clone()));
+    object.insert("bodyType".to_string(), Value::String(body_type));
+
+    let timeout_secs = object
+        .get("timeout_secs")
+        .or_else(|| object.get("timeoutSecs"))
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or(30);
+    object.insert(
+        "timeout_secs".to_string(),
+        Value::Number(timeout_secs.into()),
+    );
+    object.insert(
+        "timeoutSecs".to_string(),
+        Value::Number(timeout_secs.into()),
+    );
+
+    for key in ["headers", "cookies", "params"] {
+        if let Some(value) = object.get(key).cloned() {
+            object.insert(key.to_string(), normalize_http_key_value_entries(value));
+        }
+    }
+
+    if let Some(body) = object.get("body").cloned() {
+        let normalized = match body {
+            Value::Null => Value::String(String::new()),
+            Value::String(_) => body,
+            other => Value::String(
+                serde_json::to_string(&other).unwrap_or_else(|_| other.to_string()),
+            ),
+        };
+        object.insert("body".to_string(), normalized);
+    }
+
+    Value::Object(object)
+}
+
+fn normalize_http_key_value_entries(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items),
+        Value::Object(map) => Value::Array(
+            map.into_iter()
+                .map(|(key, value)| {
+                    json!({
+                        "key": key,
+                        "value": value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()),
+                        "enabled": true,
+                    })
+                })
+                .collect(),
+        ),
+        _ => Value::Array(Vec::new()),
+    }
+}
+
+fn request_plugin_id(request: &Value) -> Result<String, String> {
+    request
+        .get("plugin")
+        .or_else(|| request.get("pluginUuid"))
+        .or_else(|| request.get("plugin_uuid"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "url is required".to_string())?;
+        .map(str::to_string)
+        .ok_or_else(|| "plugin is required".to_string())
+}
 
-    let client = reqwest::blocking::Client::new();
-    let method = reqwest::Method::from_bytes(method.as_bytes())
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+struct HostHttpKeyValue {
+    key: String,
+    value: String,
+    enabled: bool,
+}
+
+impl Default for HostHttpKeyValue {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            value: String::new(),
+            enabled: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+struct HostHttpRequest {
+    id: String,
+    name: String,
+    method: String,
+    url: String,
+    headers: Vec<HostHttpKeyValue>,
+    cookies: Vec<HostHttpKeyValue>,
+    params: Vec<HostHttpKeyValue>,
+    body_type: String,
+    body: String,
+    timeout_secs: u64,
+    follow_redirects: bool,
+}
+
+impl Default for HostHttpRequest {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            method: "GET".to_string(),
+            url: String::new(),
+            headers: Vec::new(),
+            cookies: Vec::new(),
+            params: Vec::new(),
+            body_type: "none".to_string(),
+            body: String::new(),
+            timeout_secs: 30,
+            follow_redirects: true,
+        }
+    }
+}
+
+fn host_http_send(request: Value) -> Result<Value, String> {
+    let mut request: HostHttpRequest =
+        serde_json::from_value(normalize_host_http_request(request)).map_err(|error| {
+            format!("Invalid OTools HTTP request payload: {error}")
+        })?;
+
+    if request.body_type.is_empty() {
+        request.body_type = "none".to_string();
+    }
+    if request.timeout_secs == 0 {
+        request.timeout_secs = 30;
+    }
+    if request.method.trim().is_empty() {
+        request.method = "GET".to_string();
+    }
+
+    let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|error| format!("Invalid HTTP method: {error}"))?;
+    let mut url = parse_host_http_url(&request.url)?;
+    {
+        let mut query_pairs = url.query_pairs_mut();
+        for item in &request.params {
+            if !item.enabled || item.key.trim().is_empty() {
+                continue;
+            }
+            query_pairs.append_pair(item.key.trim(), item.value.as_str());
+        }
+    }
+
+    let redirect_policy = if request.follow_redirects {
+        reqwest::redirect::Policy::limited(10)
+    } else {
+        reqwest::redirect::Policy::none()
+    };
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(request.timeout_secs.max(1)))
+        .redirect(redirect_policy)
+        .build()
+        .map_err(|error| format!("Initialize OTools HTTP client failed: {error}"))?;
     let mut builder = client.request(method, url);
 
-    if let Some(headers) = request.get("headers").and_then(Value::as_object) {
-        for (key, value) in headers {
-            if let Some(value) = value.as_str() {
-                builder = builder.header(key, value);
-            }
+    for header in &request.headers {
+        if !header.enabled || header.key.trim().is_empty() {
+            continue;
         }
+        let header_name = HeaderName::from_bytes(header.key.trim().as_bytes())
+            .map_err(|error| format!("Invalid HTTP header '{}': {error}", header.key))?;
+        let header_value = HeaderValue::from_str(header.value.as_str())
+            .map_err(|error| format!("Invalid HTTP header value '{}': {error}", header.key))?;
+        builder = builder.header(header_name, header_value);
     }
-    if let Some(body) = request.get("body") {
-        if let Some(text) = body.as_str() {
-            builder = builder.body(text.to_string());
+
+    let cookie_header = build_cookie_header(&request.cookies);
+    if !cookie_header.is_empty() {
+        builder = builder.header(COOKIE, cookie_header);
+    }
+
+    if request.body_type != "none" && !request.body.is_empty() {
+        if !has_content_type(&request.headers) {
+            builder = match request.body_type.as_str() {
+                "json" => builder.header(CONTENT_TYPE, "application/json"),
+                "xml" => builder.header(CONTENT_TYPE, "application/xml"),
+                "form" => builder.header(CONTENT_TYPE, "application/x-www-form-urlencoded"),
+                "text" => builder.header(CONTENT_TYPE, "text/plain; charset=utf-8"),
+                "binary" => builder.header(CONTENT_TYPE, "application/octet-stream"),
+                _ => builder,
+            };
+        }
+
+        if request.body_type == "binary" {
+            let binary = BASE64_STANDARD
+                .decode(request.body.trim())
+                .map_err(|error| format!("Binary body must be base64: {error}"))?;
+            builder = builder.body(binary);
         } else {
-            builder = builder.json(body);
+            builder = builder.body(request.body.clone());
         }
     }
 
+    let started_at = Instant::now();
     let response = builder
         .send()
         .map_err(|error| format!("OTools HTTP request failed: {error}"))?;
-    let status = response.status().as_u16();
-    let headers = response
-        .headers()
-        .iter()
-        .map(|(key, value)| {
-            (
-                key.as_str().to_string(),
-                Value::String(value.to_str().unwrap_or_default().to_string()),
-            )
-        })
-        .collect::<serde_json::Map<String, Value>>();
+    let elapsed_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    let status = response.status();
+    let final_url = response.url().to_string();
+    let headers = response.headers().clone();
     let bytes = response
         .bytes()
         .map_err(|error| format!("Failed to read OTools HTTP response: {error}"))?;
+
+    let response_headers = headers
+        .iter()
+        .map(|(name, value)| {
+            json!({
+                "key": name.to_string(),
+                "value": value.to_str().unwrap_or("").to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let response_cookies = headers
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok().map(|item| item.to_string()))
+        .collect::<Vec<_>>();
+    let content_type = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let is_image = content_type.to_ascii_lowercase().starts_with("image/");
+    let body_base64 = BASE64_STANDARD.encode(&bytes);
+    let body_text = if is_image {
+        Value::Null
+    } else {
+        Value::String(String::from_utf8_lossy(&bytes).to_string())
+    };
+    let file_name = guess_response_file_name(&headers, &final_url, &content_type);
+
     Ok(json!({
-        "status": status,
-        "headers": headers,
+        "status": status.as_u16(),
+        "status_text": status.canonical_reason().unwrap_or("").to_string(),
+        "headers": response_headers,
+        "cookies": response_cookies,
+        "elapsed_ms": elapsed_ms,
+        "content_type": content_type,
+        "size": bytes.len(),
+        "body_text": body_text,
+        "body_base64": body_base64,
+        "is_image": is_image,
+        "file_name": file_name,
+        "final_url": final_url,
         "bodyBase64": BASE64_STANDARD.encode(&bytes),
-        "body": String::from_utf8_lossy(&bytes),
+        "body": String::from_utf8_lossy(&bytes).to_string(),
     }))
+}
+
+fn parse_host_http_url(url: &str) -> Result<reqwest::Url, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("url is required".to_string());
+    }
+    if let Ok(parsed) = reqwest::Url::parse(trimmed) {
+        return Ok(parsed);
+    }
+    reqwest::Url::parse(&format!("http://{trimmed}"))
+        .map_err(|error| format!("Invalid OTools HTTP url: {error}"))
+}
+
+fn has_content_type(headers: &[HostHttpKeyValue]) -> bool {
+    headers
+        .iter()
+        .any(|item| item.enabled && item.key.trim().eq_ignore_ascii_case("content-type"))
+}
+
+fn build_cookie_header(cookies: &[HostHttpKeyValue]) -> String {
+    cookies
+        .iter()
+        .filter(|item| item.enabled && !item.key.trim().is_empty())
+        .map(|item| format!("{}={}", item.key.trim(), item.value))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn parse_content_disposition_filename(content_disposition: &str) -> Option<String> {
+    for segment in content_disposition.split(';').map(str::trim) {
+        if let Some(value) = segment.strip_prefix("filename=") {
+            let file_name = value.trim_matches('"').trim();
+            if !file_name.is_empty() {
+                return Some(file_name.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn sanitize_response_file_name(file_name: &str) -> String {
+    let sanitized = file_name
+        .chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => ch,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if sanitized.is_empty() {
+        "response.bin".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn guess_response_file_name(headers: &HeaderMap, final_url: &str, content_type: &str) -> String {
+    if let Some(value) = headers
+        .get(CONTENT_DISPOSITION)
+        .and_then(|item| item.to_str().ok())
+        .and_then(parse_content_disposition_filename)
+    {
+        return sanitize_response_file_name(&value);
+    }
+
+    if let Ok(url) = reqwest::Url::parse(final_url) {
+        if let Some(segment) = url
+            .path_segments()
+            .and_then(|segments| segments.last())
+            .filter(|segment| !segment.trim().is_empty())
+        {
+            return sanitize_response_file_name(segment);
+        }
+    }
+
+    let extension = if content_type.starts_with("image/") {
+        content_type
+            .split('/')
+            .nth(1)
+            .and_then(|value| value.split(';').next())
+            .unwrap_or("png")
+            .trim()
+            .to_string()
+    } else if content_type.contains("json") {
+        "json".to_string()
+    } else if content_type.contains("xml") {
+        "xml".to_string()
+    } else if content_type.contains("text") {
+        "txt".to_string()
+    } else {
+        "bin".to_string()
+    };
+
+    format!(
+        "response_{}.{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|value| value.as_millis())
+            .unwrap_or(0),
+        extension
+    )
 }
 
 fn catch_native_panic<T, F>(context: &str, action: F) -> Result<T, String>

@@ -18,6 +18,7 @@ mod network;
 pub mod office_watch;
 #[path = "../../otools/rust/otools_bridge.rs"]
 pub mod otools_bridge;
+pub mod otools_lifecycle_runtime;
 pub mod parsers;
 pub mod paths;
 pub mod pet_sessions;
@@ -748,6 +749,8 @@ mod tauri_app {
                     tauri::async_runtime::spawn(crate::automation::run_automation_engine(engine));
                 }
 
+                crate::otools_lifecycle_runtime::spawn_otools_autostart_worker("desktop");
+
                 // Single-window workspace: ensure the main window exists.
                 // Workspace state (open folders, opened tabs, active tab) is
                 // restored by the frontend via `list_open_folder_details` /
@@ -1419,6 +1422,7 @@ mod tauri_app {
                     if let Some(pet) = app.get_webview_window("pet") {
                         let _ = pet.close();
                     }
+                    crate::otools_lifecycle_runtime::run_otools_shutdown_hooks_worker("desktop");
                     if let Some(ws) = app.try_state::<web::WebServerState>() {
                         tauri::async_runtime::block_on(web::do_stop_web_server(&ws));
                     }
