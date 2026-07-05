@@ -24,6 +24,81 @@ pub fn open_otools_window_core() -> OtoolsNavigationResult {
 pub fn otools_show_main_window_core() {}
 
 #[cfg(feature = "tauri-runtime")]
+fn otools_status_bar_text(value: Option<&Value>) -> Option<String> {
+    let text = value
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn apply_otools_status_bar_state(payload: &Value) -> Result<(), AppCommandError> {
+    let Some(app) = otools_platform_app::current_app_handle() else {
+        return Ok(());
+    };
+    let Some(tray) = app.tray_by_id(crate::commands::windows::TRAY_ICON_ID) else {
+        return Ok(());
+    };
+
+    let body = payload.as_object();
+    let title = otools_status_bar_text(body.and_then(|item| item.get("title")));
+    let tooltip = otools_status_bar_text(body.and_then(|item| item.get("tooltip")));
+    let visible = body
+        .and_then(|item| item.get("visible"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
+    #[cfg(target_os = "macos")]
+    {
+        tray.set_title(if visible { title.clone() } else { None })
+            .map_err(|error| {
+                AppCommandError::window("Failed to update OTools tray title", error.to_string())
+            })?;
+        tray.set_tooltip(Some(
+            if visible {
+                tooltip
+                    .clone()
+                    .or_else(|| title.clone())
+                    .unwrap_or_else(|| "Codeg".to_string())
+            } else {
+                "Codeg".to_string()
+            },
+        ))
+        .map_err(|error| {
+            AppCommandError::window("Failed to update OTools tray tooltip", error.to_string())
+        })?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        tray.set_tooltip(Some(
+            if visible {
+                tooltip
+                    .clone()
+                    .or_else(|| title.clone())
+                    .unwrap_or_else(|| "Codeg".to_string())
+            } else {
+                "Codeg".to_string()
+            },
+        ))
+        .map_err(|error| {
+            AppCommandError::window("Failed to update OTools tray tooltip", error.to_string())
+        })?;
+    }
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        let _ = title;
+        let _ = tooltip;
+        let _ = visible;
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "tauri-runtime")]
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn open_otools_window(
     app: tauri::AppHandle,
@@ -973,6 +1048,9 @@ pub async fn upload_save_image(
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_set_status_bar_state(payload: Value) -> Result<Value, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    apply_otools_status_bar_state(&payload)?;
+
     otools_host::otools_set_status_bar_state(payload)
         .await
         .map_err(map_host_error)
@@ -1054,6 +1132,19 @@ pub async fn otools_show_notification(
     body: String,
     click_feature_code: Option<String>,
 ) -> Result<(), AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = otools_platform_app::current_app_handle() {
+        crate::commands::notification::send_notification(
+            app,
+            click_feature_code
+                .clone()
+                .unwrap_or_else(|| "OTools".to_string()),
+            body.clone(),
+        )
+        .await?;
+        return Ok(());
+    }
+
     otools_host::otools_show_notification(body, click_feature_code)
         .await
         .map_err(map_host_error)

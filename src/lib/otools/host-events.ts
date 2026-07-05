@@ -3,6 +3,8 @@ export const OTOOLS_HOST_CREATE_TAB_EVENT = "codeg:otools-create-tab"
 export const OTOOLS_HOST_CLOSE_TAB_EVENT = "codeg:otools-close-tab"
 export const OTOOLS_HOST_SWITCH_TAB_EVENT = "codeg:otools-switch-tab"
 export const OTOOLS_HOST_SHELL_SHORTCUT_EVENT = "codeg:otools-shell-shortcut"
+export const OTOOLS_HOST_STATUS_BAR_EVENT = "codeg:otools-status-bar"
+export const OTOOLS_HOST_NOTIFICATION_EVENT = "codeg:otools-notification"
 export const OTOOLS_HOST_CHILD_THEME_SYNC_EVENT =
   "codeg:otools-child-theme-sync"
 export const OTOOLS_HOST_CHILD_LOCALE_SYNC_EVENT =
@@ -31,6 +33,20 @@ export type OtoolsHostShellShortcutAction =
 
 export interface OtoolsHostShellShortcutDetail {
   action: OtoolsHostShellShortcutAction
+}
+
+export interface OtoolsHostStatusBarDetail {
+  pluginUuid?: string | null
+  title?: string | null
+  tooltip?: string | null
+  visible?: boolean
+}
+
+export interface OtoolsHostNotificationDetail {
+  pluginUuid?: string | null
+  title?: string | null
+  body?: string | null
+  clickFeatureCode?: string | null
 }
 
 export interface OtoolsHostWindowState {

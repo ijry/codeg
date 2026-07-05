@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react"
+import { toast } from "sonner"
 import {
   Box,
   Boxes,
@@ -27,13 +28,17 @@ import { getServerBaseUrl, getShellTransport, isDesktop } from "@/lib/transport"
 import {
   OTOOLS_HOST_CLOSE_TAB_EVENT,
   OTOOLS_HOST_CREATE_TAB_EVENT,
+  OTOOLS_HOST_NOTIFICATION_EVENT,
   OTOOLS_HOST_RELOAD_PLUGINS_EVENT,
   OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
+  OTOOLS_HOST_STATUS_BAR_EVENT,
   OTOOLS_HOST_SWITCH_TAB_EVENT,
   type OtoolsHostCloseTabDetail,
   type OtoolsHostCreateTabDetail,
+  type OtoolsHostNotificationDetail,
   type OtoolsHostShellShortcutAction,
   type OtoolsHostShellShortcutDetail,
+  type OtoolsHostStatusBarDetail,
   type OtoolsHostSwitchTabDetail,
   type OtoolsHostWindowState,
 } from "@/lib/otools/host-events"
@@ -120,6 +125,8 @@ export function OtoolsShell() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [marketQuery, setMarketQuery] = useState("")
+  const [statusBarState, setStatusBarState] =
+    useState<OtoolsHostStatusBarDetail | null>(null)
 
   const loadPlugins = useCallback(async () => {
     setLoading(true)
@@ -175,6 +182,11 @@ export function OtoolsShell() {
       ).length,
     [plugins]
   )
+  const statusBarLabel = useMemo(() => {
+    const title = String(statusBarState?.title || "").trim()
+    const tooltip = String(statusBarState?.tooltip || "").trim()
+    return title || tooltip
+  }, [statusBarState])
 
   useEffect(() => {
     const handleReload = () => {
@@ -185,6 +197,51 @@ export function OtoolsShell() {
     return () =>
       window.removeEventListener(OTOOLS_HOST_RELOAD_PLUGINS_EVENT, handleReload)
   }, [loadPlugins])
+
+  useEffect(() => {
+    const handleStatusBar = (event: Event) => {
+      const detail = (event as CustomEvent<OtoolsHostStatusBarDetail>).detail
+      const title = String(detail?.title || "").trim()
+      const tooltip = String(detail?.tooltip || "").trim()
+      if (detail?.visible === false || (!title && !tooltip)) {
+        setStatusBarState(null)
+        return
+      }
+      setStatusBarState({
+        pluginUuid: String(detail?.pluginUuid || "").trim() || null,
+        title: title || null,
+        tooltip: tooltip || null,
+        visible: true,
+      })
+    }
+
+    const handleNotification = (event: Event) => {
+      const detail = (event as CustomEvent<OtoolsHostNotificationDetail>).detail
+      const title = String(detail?.title || "").trim() || "OTools"
+      const body = String(detail?.body || "").trim()
+      if (body) {
+        toast(title, { description: body })
+        return
+      }
+      toast(title)
+    }
+
+    window.addEventListener(OTOOLS_HOST_STATUS_BAR_EVENT, handleStatusBar)
+    window.addEventListener(
+      OTOOLS_HOST_NOTIFICATION_EVENT,
+      handleNotification
+    )
+    return () => {
+      window.removeEventListener(
+        OTOOLS_HOST_STATUS_BAR_EVENT,
+        handleStatusBar
+      )
+      window.removeEventListener(
+        OTOOLS_HOST_NOTIFICATION_EVENT,
+        handleNotification
+      )
+    }
+  }, [])
 
   useEffect(() => {
     const state: OtoolsHostWindowState = {
@@ -600,6 +657,15 @@ export function OtoolsShell() {
               )
             })}
           </div>
+          {statusBarLabel ? (
+            <Badge
+              variant="secondary"
+              className="max-w-72 shrink-0 truncate px-2 py-1 text-[11px]"
+              title={statusBarState?.tooltip || statusBarLabel}
+            >
+              {statusBarLabel}
+            </Badge>
+          ) : null}
         </div>
 
         {activeTab.kind === "home" ? (

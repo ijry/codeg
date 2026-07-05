@@ -1,7 +1,19 @@
+use std::sync::OnceLock;
+
 use tauri::{plugin::TauriPlugin, AppHandle, Runtime};
+
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 pub fn init_plugin<R: Runtime>() -> TauriPlugin<R> {
     tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None)
+}
+
+pub fn set_runtime_app_handle(app: AppHandle) {
+    let _ = APP_HANDLE.set(app);
+}
+
+pub fn current_app_handle() -> Option<AppHandle> {
+    APP_HANDLE.get().cloned()
 }
 
 pub fn otools_request_app_exit(app: AppHandle) -> Result<(), String> {

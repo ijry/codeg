@@ -325,6 +325,7 @@ mod tauri_app {
             .manage(crate::update::new_update_state_handle())
             .setup(|app| {
                 let app_data_dir = app.path().app_data_dir()?;
+                otools_platform_app::set_runtime_app_handle(app.handle().clone());
                 otools_platform_shortcuts::initialize_global_shortcuts(&app.handle())
                     .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
 

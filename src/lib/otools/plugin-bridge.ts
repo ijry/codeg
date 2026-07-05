@@ -35,8 +35,10 @@ import {
 import {
   OTOOLS_HOST_CLOSE_TAB_EVENT,
   OTOOLS_HOST_CREATE_TAB_EVENT,
+  OTOOLS_HOST_NOTIFICATION_EVENT,
   OTOOLS_HOST_RELOAD_PLUGINS_EVENT,
   OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
+  OTOOLS_HOST_STATUS_BAR_EVENT,
   OTOOLS_HOST_SWITCH_TAB_EVENT,
   dispatchOtoolsChildLocaleSync,
   dispatchOtoolsChildThemeSync,
@@ -44,7 +46,9 @@ import {
   type OtoolsHostCreateTabDetail,
   type OtoolsHostChildLocaleSyncDetail,
   type OtoolsHostChildThemeSyncDetail,
+  type OtoolsHostNotificationDetail,
   type OtoolsHostShellShortcutDetail,
+  type OtoolsHostStatusBarDetail,
   type OtoolsHostSwitchTabDetail,
   type OtoolsHostWindowState,
 } from "./host-events"
@@ -917,12 +921,39 @@ async function dispatchOtoolsCommand(
     return normalizeUploadSavedImage(saved)
   }
 
-  if (NOTIFICATION_COMMANDS.has(command)) {
-    const body = asRecord(payload)
-    return sendSystemNotification(
-      body?.title ? String(body.title) : "OTools",
-      body?.body ? String(body.body) : body?.message ? String(body.message) : ""
+  if (command === "otools_set_status_bar_state") {
+    const detail = normalizeStatusBarDetail(targetPluginUuid, payload)
+    dispatchHostCustomEvent<OtoolsHostStatusBarDetail>(
+      OTOOLS_HOST_STATUS_BAR_EVENT,
+      detail
     )
+
+    if (isDesktop()) {
+      try {
+        return await getShellTransport().call("otools_set_status_bar_state", {
+          payload: {
+            title: detail.title ?? null,
+            tooltip: detail.tooltip ?? null,
+            visible: detail.visible !== false,
+          },
+        })
+      } catch {}
+    }
+
+    return {
+      ok: true,
+      payload: detail,
+    }
+  }
+
+  if (NOTIFICATION_COMMANDS.has(command)) {
+    const detail = normalizeNotificationDetail(targetPluginUuid, payload)
+    dispatchHostCustomEvent<OtoolsHostNotificationDetail>(
+      OTOOLS_HOST_NOTIFICATION_EVENT,
+      detail
+    )
+    await sendSystemNotification(detail.title || "OTools", detail.body || "")
+    return true
   }
 
   switch (command) {
@@ -1868,7 +1899,7 @@ function otoolsCompatBootstrap(config: {
       return resolvePluginUuid(pluginUuid)
     },
     getNativeId() {
-      return pluginUuid
+      return env.nativeId
     },
     getAppName() {
       return env.appName
@@ -2266,6 +2297,43 @@ function readHostWindowState(): OtoolsHostWindowState {
       typeof raw.activeLabel === "string" && raw.activeLabel.trim()
         ? raw.activeLabel.trim()
         : null,
+  }
+}
+
+function normalizeNotificationDetail(
+  pluginUuid: string,
+  payload: unknown
+): OtoolsHostNotificationDetail {
+  return {
+    pluginUuid: resolvePluginUuid(pluginUuid) || null,
+    title:
+      readOptionalStringField(payload, "title") ||
+      readOptionalStringField(payload, "clickFeatureCode") ||
+      "OTools",
+    body:
+      readOptionalStringField(payload, "body") ||
+      readOptionalStringField(payload, "message"),
+    clickFeatureCode: readOptionalStringField(payload, "clickFeatureCode"),
+  }
+}
+
+function normalizeStatusBarDetail(
+  pluginUuid: string,
+  payload: unknown
+): OtoolsHostStatusBarDetail {
+  const body = asRecord(asRecord(payload)?.payload ?? payload)
+  const visible = typeof body?.visible === "boolean" ? body.visible : true
+  return {
+    pluginUuid: resolvePluginUuid(pluginUuid) || null,
+    title:
+      typeof body?.title === "string" && body.title.trim()
+        ? body.title.trim()
+        : null,
+    tooltip:
+      typeof body?.tooltip === "string" && body.tooltip.trim()
+        ? body.tooltip.trim()
+        : null,
+    visible,
   }
 }
 
