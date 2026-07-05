@@ -13,7 +13,6 @@ otools-platform-native = { path = "../platform/native" }
 otools-plugin-state = { path = "../platform/plugin-state" }
 otools-plugin-config = { path = "../plugins/config/host" }
 otools-plugin-dev = { path = "../plugins/dev/host" }
-otools-plugin-nav = { path = "../plugins/nav/host" }
 otools-plugin-park = { path = "../plugins/park/host" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -4717,7 +4717,6 @@ dependencies = [
  "otools-platform-native",
  "otools-plugin-config",
  "otools-plugin-dev",
- "otools-plugin-nav",
  "otools-plugin-park",
  "otools-plugin-state",
  "serde",
@@ -4846,19 +4845,6 @@ dependencies = [
  "uuid",
  "walkdir",
  "zip 2.4.2",
-]
-
-[[package]]
-name = "otools-plugin-nav"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "dirs 6.0.0",
- "otools-ai",
- "otools-core",
- "serde",
- "serde_json",
- "uuid",
 ]
 
 [[package]]

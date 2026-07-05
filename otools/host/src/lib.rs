@@ -225,9 +225,6 @@ pub async fn otools_plugin_command_invoke(
     if otools_plugin_dev::supports_plugin(&plugin_uuid) {
         return otools_plugin_dev::dispatch_command(&command, request.payload).await;
     }
-    if otools_plugin_nav::supports_plugin(&plugin_uuid) {
-        return otools_plugin_nav::dispatch_command(&command, request.payload).await;
-    }
     if otools_plugin_park::supports_plugin(&plugin_uuid) {
         return otools_plugin_park::dispatch_command(&command, request.payload).await;
     }
