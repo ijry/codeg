@@ -1,8 +1,6 @@
 #[cfg(feature = "tauri-runtime")]
 use serde::Deserialize;
 use serde_json::Value;
-#[cfg(feature = "tauri-runtime")]
-use std::path::{Path, PathBuf};
 
 use crate::app_error::{AppCommandError, AppErrorCode};
 
@@ -476,61 +474,18 @@ pub async fn project_editor_open(
     path: String,
     editor_id: String,
 ) -> Result<(), AppCommandError> {
-    let normalized_path = path.trim().to_string();
-    if normalized_path.is_empty() {
-        return Err(AppCommandError::invalid_input("path is required"));
-    }
-
-    let normalized_editor_id = editor_id.trim().to_lowercase();
-    if normalized_editor_id.is_empty() {
-        return Err(AppCommandError::invalid_input("editorId is required"));
-    }
-
-    #[cfg(feature = "tauri-runtime")]
-    {
-        match normalized_editor_id.as_str() {
-            "vscode" => open_in_vscode(&normalized_path)?,
-            "idea" => open_in_idea(&normalized_path)?,
-            _ => {
-                return Err(AppCommandError::invalid_input(format!(
-                    "unsupported project editor: {normalized_editor_id}"
-                )));
-            }
-        }
-        return Ok(());
-    }
-
-    #[cfg(not(feature = "tauri-runtime"))]
-    {
-        let _ = normalized_path;
-        Err(AppCommandError::task_execution_failed(
-            "project editor launch is only available in desktop runtime",
-        ))
-    }
+    otools_host::project_editor_open(path, editor_id)
+        .await
+        .map_err(map_host_error)
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn project_runner_open_in_terminal(
     working_dir: Option<String>,
 ) -> Result<(), AppCommandError> {
-    let path = working_dir.unwrap_or_default();
-    let normalized_path = path.trim().to_string();
-    if normalized_path.is_empty() {
-        return Err(AppCommandError::invalid_input("workingDir is required"));
-    }
-
-    #[cfg(feature = "tauri-runtime")]
-    {
-        open_in_terminal(&normalized_path)?;
-        return Ok(());
-    }
-
-    #[cfg(not(feature = "tauri-runtime"))]
-    {
-        Err(AppCommandError::task_execution_failed(
-            "system terminal launch is only available in desktop runtime",
-        ))
-    }
+    otools_host::project_runner_open_in_terminal(working_dir)
+        .await
+        .map_err(map_host_error)
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
@@ -1535,208 +1490,4 @@ fn map_host_error(error: otools_host::HostError) -> AppCommandError {
 #[cfg(feature = "tauri-runtime")]
 fn map_platform_app_error(message: String) -> AppCommandError {
     AppCommandError::task_execution_failed(message)
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn resolve_terminal_working_dir(path: &str) -> Result<PathBuf, AppCommandError> {
-    let candidate = PathBuf::from(path);
-    let directory = if candidate.is_file() {
-        candidate.parent().map(Path::to_path_buf).ok_or_else(|| {
-            AppCommandError::task_execution_failed("Failed to resolve parent directory")
-        })?
-    } else {
-        candidate
-    };
-
-    if !directory.is_dir() {
-        return Err(
-            AppCommandError::task_execution_failed("Directory does not exist or is not a folder")
-                .with_detail(directory.to_string_lossy().to_string()),
-        );
-    }
-
-    Ok(directory)
-}
-
-#[cfg(all(feature = "tauri-runtime", target_os = "windows"))]
-fn normalize_windows_path(raw_path: &str) -> String {
-    raw_path.trim().trim_matches('"').replace('/', "\\")
-}
-
-#[cfg(all(feature = "tauri-runtime", target_os = "macos"))]
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn open_in_vscode(path: &str) -> Result<(), AppCommandError> {
-    use std::process::Command;
-
-    #[cfg(target_os = "macos")]
-    {
-        let status = Command::new("open")
-            .args(["-a", "Visual Studio Code", path])
-            .status()
-            .map_err(|error| {
-                AppCommandError::external_command(
-                    "Failed to open VSCode",
-                    error.to_string(),
-                )
-            })?;
-
-        if status.success() {
-            return Ok(());
-        }
-
-        return Err(AppCommandError::external_command(
-            "Failed to open VSCode",
-            format!("exit status: {status}"),
-        ));
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let status = Command::new("code")
-            .arg("-r")
-            .arg(path)
-            .status()
-            .map_err(|error| {
-                AppCommandError::external_command(
-                    "Failed to open VSCode",
-                    error.to_string(),
-                )
-            })?;
-
-        if status.success() {
-            Ok(())
-        } else {
-            Err(AppCommandError::external_command(
-                "Failed to open VSCode",
-                format!("exit status: {status}"),
-            ))
-        }
-    }
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn open_in_idea(path: &str) -> Result<(), AppCommandError> {
-    use std::process::Command;
-
-    #[cfg(target_os = "macos")]
-    {
-        let status = Command::new("open")
-            .args(["-a", "IntelliJ IDEA", path])
-            .status()
-            .map_err(|error| {
-                AppCommandError::external_command(
-                    "Failed to open IntelliJ IDEA",
-                    error.to_string(),
-                )
-            })?;
-
-        if status.success() {
-            return Ok(());
-        }
-
-        return Err(AppCommandError::external_command(
-            "Failed to open IntelliJ IDEA",
-            format!("exit status: {status}"),
-        ));
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let status = Command::new("idea")
-            .arg(path)
-            .status()
-            .map_err(|error| {
-                AppCommandError::external_command(
-                    "Failed to open IntelliJ IDEA",
-                    error.to_string(),
-                )
-            })?;
-
-        if status.success() {
-            Ok(())
-        } else {
-            Err(AppCommandError::external_command(
-                "Failed to open IntelliJ IDEA",
-                format!("exit status: {status}"),
-            ))
-        }
-    }
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn open_in_terminal(path: &str) -> Result<(), AppCommandError> {
-    use std::process::Command;
-
-    #[cfg(target_os = "windows")]
-    {
-        let normalized_path = normalize_windows_path(path);
-        if normalized_path.is_empty() {
-            return Err(AppCommandError::invalid_input("Path is empty"));
-        }
-        let working_dir = resolve_terminal_working_dir(&normalized_path)?;
-        Command::new("cmd")
-            .current_dir(&working_dir)
-            .args(["/C", "start", "", "cmd", "/K"])
-            .spawn()
-            .map_err(|error| {
-                AppCommandError::external_command(
-                    "Failed to open terminal",
-                    error.to_string(),
-                )
-            })?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let shell_cmd = format!("cd {} && exec \"$SHELL\"", shell_single_quote(path));
-        let escaped = shell_cmd.replace('\\', "\\\\").replace('"', "\\\"");
-        let script =
-            format!("tell application \"Terminal\" to do script \"{escaped}\"");
-
-        Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .spawn()
-            .map_err(|error| {
-                AppCommandError::external_command(
-                    "Failed to open terminal",
-                    error.to_string(),
-                )
-            })?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let terminals = ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"];
-        for terminal in terminals {
-            let result = match terminal {
-                "gnome-terminal" => Command::new(terminal)
-                    .args(["--", "sh", "-c", &format!("cd '{}' && exec bash", path)])
-                    .spawn(),
-                _ => Command::new(terminal)
-                    .args(["-e", "sh", "-c", &format!("cd '{}' && exec bash", path)])
-                    .spawn(),
-            };
-
-            if result.is_ok() {
-                return Ok(());
-            }
-        }
-
-        return Err(AppCommandError::external_command(
-            "Failed to open terminal",
-            "No suitable terminal emulator found",
-        ));
-    }
-
-    #[allow(unreachable_code)]
-    Err(AppCommandError::task_execution_failed(
-        "Unsupported platform for terminal launch",
-    ))
 }

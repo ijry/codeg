@@ -18,8 +18,9 @@ pub use otools_platform_filesystem::{
     write_file_content, FsItem,
 };
 pub use otools_platform_host::{
-    project_runner_read_scripts, OtoolsCopiedFile, ProjectScriptInfo, ProjectScriptsResponse,
-    otools_copy_file, otools_copy_image, otools_copy_text, otools_get_copied_files,
+    project_editor_open, project_runner_open_in_terminal, project_runner_read_scripts,
+    OtoolsCopiedFile, ProjectScriptInfo, ProjectScriptsResponse, otools_copy_file,
+    otools_copy_image, otools_copy_text, otools_get_copied_files,
     otools_get_file_icon, otools_host_clean_storage_items, otools_host_clean_storage_paths,
     otools_host_get_package_status, otools_host_get_packages_status, otools_host_http_send,
     otools_host_http_write_base64_file, otools_host_kill_process,
