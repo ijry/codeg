@@ -1,5 +1,7 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::fs;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -109,56 +111,59 @@ pub fn native_plugin_invoke(uuid: String, method: String, payload: Value) -> Res
     let mut registry = registry
         .lock()
         .map_err(|_| "Native plugin registry 已锁死".to_string())?;
-    let config = resolve_native_plugin_config_cached(&normalized, &mut registry)?;
-    if !config.enabled {
-        return Err("插件 native 配置未启用".to_string());
-    }
 
-    {
-        let entry = registry
-            .entry(normalized.clone())
-            .or_insert_with(|| NativePluginEntry {
-                config: config.clone(),
-                manifest_modified: None,
-                handle: None,
-            });
-        entry.config = config.clone();
+    catch_native_panic("native_plugin_invoke", || {
+        let config = resolve_native_plugin_config_cached(&normalized, &mut registry)?;
+        if !config.enabled {
+            return Err("插件 native 配置未启用".to_string());
+        }
 
-        if let Some(handle) = entry.handle.as_ref() {
-            if should_reload_handle(handle, &config) {
-                entry.handle = None;
+        {
+            let entry = registry
+                .entry(normalized.clone())
+                .or_insert_with(|| NativePluginEntry {
+                    config: config.clone(),
+                    manifest_modified: None,
+                    handle: None,
+                });
+            entry.config = config.clone();
+
+            if let Some(handle) = entry.handle.as_ref() {
+                if should_reload_handle(handle, &config) {
+                    entry.handle = None;
+                }
+            }
+            if entry.handle.is_none() {
+                entry.handle = Some(load_native_plugin(&normalized, &config)?);
             }
         }
-        if entry.handle.is_none() {
-            entry.handle = Some(load_native_plugin(&normalized, &config)?);
+
+        let handle = registry
+            .get(&normalized)
+            .and_then(|entry| entry.handle.as_ref())
+            .ok_or_else(|| "插件加载失败".to_string())?;
+
+        let mut output_len: usize = 0;
+        let output_ptr = unsafe { (handle.invoke)(input.as_ptr(), input.len(), &mut output_len) };
+        if output_ptr.is_null() {
+            return Err("插件返回空响应".to_string());
         }
-    }
+        let output = unsafe { std::slice::from_raw_parts(output_ptr, output_len).to_vec() };
+        unsafe {
+            (handle.free)(output_ptr, output_len);
+        }
 
-    let handle = registry
-        .get(&normalized)
-        .and_then(|entry| entry.handle.as_ref())
-        .ok_or_else(|| "插件加载失败".to_string())?;
-
-    let mut output_len: usize = 0;
-    let output_ptr = unsafe { (handle.invoke)(input.as_ptr(), input.len(), &mut output_len) };
-    if output_ptr.is_null() {
-        return Err("插件返回空响应".to_string());
-    }
-    let output = unsafe { std::slice::from_raw_parts(output_ptr, output_len).to_vec() };
-    unsafe {
-        (handle.free)(output_ptr, output_len);
-    }
-
-    let value: Value = serde_json::from_slice(&output)
-        .map_err(|error| format!("插件返回 JSON 解析失败: {error}"))?;
-    if value.get("ok").and_then(Value::as_bool) == Some(false) {
-        return Err(value
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("插件调用失败")
-            .to_string());
-    }
-    Ok(value)
+        let value: Value = serde_json::from_slice(&output)
+            .map_err(|error| format!("插件返回 JSON 解析失败: {error}"))?;
+        if value.get("ok").and_then(Value::as_bool) == Some(false) {
+            return Err(value
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("插件调用失败")
+                .to_string());
+        }
+        Ok(value)
+    })
 }
 
 pub fn native_plugin_reload(uuid: String) -> Result<String, String> {
@@ -170,8 +175,10 @@ pub fn native_plugin_reload(uuid: String) -> Result<String, String> {
     let mut registry = registry
         .lock()
         .map_err(|_| "Native plugin registry 已锁死".to_string())?;
-    registry.remove(&normalized);
-    Ok("插件已卸载，可重新调用加载".to_string())
+    catch_native_panic("native_plugin_reload", || {
+        registry.remove(&normalized);
+        Ok("插件已卸载，可重新调用加载".to_string())
+    })
 }
 
 pub fn native_plugin_probe(uuid: String) -> Result<Value, String> {
@@ -183,34 +190,36 @@ pub fn native_plugin_probe(uuid: String) -> Result<Value, String> {
     let mut registry = registry
         .lock()
         .map_err(|_| "Native plugin registry 已锁死".to_string())?;
-    let config = resolve_native_plugin_config_cached(&normalized, &mut registry)?;
-    let path = config.source_path.clone();
-    let (loaded, cache_path) = registry
-        .get(&normalized)
-        .and_then(|entry| entry.handle.as_ref())
-        .map(|handle| {
-            (
-                true,
-                Some(handle.cache_path.to_string_lossy().to_string()),
-            )
-        })
-        .unwrap_or((false, None));
+    catch_native_panic("native_plugin_probe", || {
+        let config = resolve_native_plugin_config_cached(&normalized, &mut registry)?;
+        let path = config.source_path.clone();
+        let (loaded, cache_path) = registry
+            .get(&normalized)
+            .and_then(|entry| entry.handle.as_ref())
+            .map(|handle| {
+                (
+                    true,
+                    Some(handle.cache_path.to_string_lossy().to_string()),
+                )
+            })
+            .unwrap_or((false, None));
 
-    Ok(json!({
-        "uuid": normalized,
-        "path": path.to_string_lossy().to_string(),
-        "exists": path.exists(),
-        "platform": platform_lib_name(),
-        "enabled": config.enabled,
-        "autoReload": config.auto_reload,
-        "libDir": config.lib_dir,
-        "libName": config.lib_name,
-        "libPath": config.lib_path,
-        "manifestPath": config.manifest_path.map(|value| value.to_string_lossy().to_string()),
-        "cacheDir": native_cache_dir(&normalized).to_string_lossy().to_string(),
-        "cachePath": cache_path,
-        "loaded": loaded,
-    }))
+        Ok(json!({
+            "uuid": normalized,
+            "path": path.to_string_lossy().to_string(),
+            "exists": path.exists(),
+            "platform": platform_lib_name(),
+            "enabled": config.enabled,
+            "autoReload": config.auto_reload,
+            "libDir": config.lib_dir,
+            "libName": config.lib_name,
+            "libPath": config.lib_path,
+            "manifestPath": config.manifest_path.map(|value| value.to_string_lossy().to_string()),
+            "cacheDir": native_cache_dir(&normalized).to_string_lossy().to_string(),
+            "cachePath": cache_path,
+            "loaded": loaded,
+        }))
+    })
 }
 
 pub fn native_plugin_poll_events(uuid: String) -> Result<Vec<Value>, String> {
@@ -219,8 +228,11 @@ pub fn native_plugin_poll_events(uuid: String) -> Result<Vec<Value>, String> {
         return Err("插件 UUID 不能为空".to_string());
     }
 
-    let response = native_plugin_invoke(normalized.clone(), "poll_events".to_string(), json!({}))?;
-    Ok(parse_poll_events(response, &normalized))
+    catch_native_panic("native_plugin_poll_events", || {
+        let response =
+            native_plugin_invoke(normalized.clone(), "poll_events".to_string(), json!({}))?;
+        Ok(parse_poll_events(response, &normalized))
+    })
 }
 
 pub fn normalize_plugin_id(value: &str) -> String {
@@ -723,7 +735,9 @@ unsafe extern "C" fn otools_native_host_dispatch(
         serde_json::from_slice(slice).unwrap_or(Value::Null)
     };
 
-    let response = match dispatch_host_capability(capability.trim(), request_value) {
+    let response = match catch_native_panic("otools_native_host_dispatch", || {
+        dispatch_host_capability(capability.trim(), request_value)
+    }) {
         Ok(data) => json!({ "ok": true, "data": data }),
         Err(error) => json!({ "ok": false, "error": error }),
     };
@@ -832,4 +846,27 @@ fn host_http_send(request: Value) -> Result<Value, String> {
         "bodyBase64": BASE64_STANDARD.encode(&bytes),
         "body": String::from_utf8_lossy(&bytes),
     }))
+}
+
+fn catch_native_panic<T, F>(context: &str, action: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    match panic::catch_unwind(AssertUnwindSafe(action)) {
+        Ok(result) => result,
+        Err(payload) => Err(format!(
+            "{context} 发生 panic: {}",
+            format_panic_payload(payload)
+        )),
+    }
+}
+
+fn format_panic_payload(payload: Box<dyn Any + Send>) -> String {
+    match payload.downcast::<String>() {
+        Ok(message) => *message,
+        Err(payload) => match payload.downcast::<&'static str>() {
+            Ok(message) => (*message).to_string(),
+            Err(_) => "unknown panic".to_string(),
+        },
+    }
 }

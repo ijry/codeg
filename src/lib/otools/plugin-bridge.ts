@@ -146,6 +146,30 @@ const PACKAGE_MANAGER_COMMANDS = new Set([
   "otools_host_get_packages_status",
 ])
 
+const HOST_COMMANDS = new Set([
+  "otools_host_scan_storage_catalog",
+  "otools_host_clean_storage_paths",
+  "otools_host_clean_storage_items",
+  "otools_host_list_listen_processes",
+  "otools_host_kill_process",
+  "otools_host_http_write_base64_file",
+  "otools_host_http_send",
+])
+
+const TOOLS_WEBVIEW_FORWARD_COMMANDS = new Set([
+  "tools_webview_read_file",
+  "tools_webview_write_file",
+  "tools_webview_list_dir",
+  "tools_webview_home_dir",
+  "tools_webview_join_path",
+  "tools_webview_create_dir",
+  "tools_webview_touch_file",
+  "tools_webview_remove_entry",
+  "tools_webview_rename_entry",
+  "tools_webview_browse_dialog",
+  "tools_webview_log",
+])
+
 const NOTIFICATION_COMMANDS = new Set([
   "__otools_show_notification",
   "otools_show_notification",
@@ -699,8 +723,27 @@ async function dispatchOtoolsCommand(
     return getTransport().call(command, asRecord(payload) ?? {})
   }
 
+  if (HOST_COMMANDS.has(command)) {
+    return getTransport().call(command, asRecord(payload) ?? {})
+  }
+
+  if (TOOLS_WEBVIEW_FORWARD_COMMANDS.has(command)) {
+    return getTransport().call(command, asRecord(payload) ?? {})
+  }
+
   if (CONFIG_COMMANDS.has(command)) {
     return dispatchConfigCommand(command, payload)
+  }
+
+  if (command === "save_http_file") {
+    return getTransport().call("otools_host_http_write_base64_file", {
+      filePath:
+        readStringField(payload, "filePath") ||
+        readStringField(payload, "file_path"),
+      dataBase64:
+        readStringField(payload, "dataBase64") ||
+        readStringField(payload, "data_base64"),
+    })
   }
 
   if (command === "otools_ai_load_chat_history") {
