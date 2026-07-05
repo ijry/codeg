@@ -446,22 +446,11 @@ fn read_manifest_plugin(root: &PathBuf) -> Option<ToolPlugin> {
 }
 
 fn plugin_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Ok(value) = std::env::var("CODEG_OTOOLS_PLUGIN_DIR") {
-        roots.push(PathBuf::from(value));
-    }
+    let mut roots = catalog::external_plugin_dirs();
     roots.push(catalog::installed_plugins_dir());
     roots.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("plugins"),
-    );
-    roots.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("MenuGit")
             .join("plugins"),
     );
     roots

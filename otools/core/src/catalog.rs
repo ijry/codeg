@@ -123,6 +123,16 @@ pub fn installed_plugins_dir() -> PathBuf {
     otools_root_dir().join("plugins")
 }
 
+pub fn external_plugin_dirs() -> Vec<PathBuf> {
+    std::env::var_os("CODEG_OTOOLS_PLUGIN_DIR")
+        .map(|value| {
+            std::env::split_paths(&value)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn plugins_file_path() -> PathBuf {
     otools_root_dir().join("plugins.json")
 }
