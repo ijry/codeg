@@ -236,6 +236,10 @@ type OtoolsLocalTerminalSession = {
 let copiedHostFiles: string[] = []
 let cachedOtoolsHostInfo: Promise<Record<string, unknown> | null> | null = null
 
+function canUseLocalDesktopHost(): boolean {
+  return isDesktop() && getActiveRemoteConnectionId() === null
+}
+
 export function installOtoolsFrameBridge(
   frame: HTMLIFrameElement,
   pluginUuid: string
@@ -973,7 +977,7 @@ export async function dispatchOtoolsCommand(
       detail
     )
 
-    if (isDesktop()) {
+    if (canUseLocalDesktopHost()) {
       try {
         return await getShellTransport().call("otools_set_status_bar_state", {
           payload: {
@@ -1010,12 +1014,12 @@ export async function dispatchOtoolsCommand(
       window.dispatchEvent(new Event(OTOOLS_HOST_RELOAD_PLUGINS_EVENT))
       return true
     case "otools_request_app_exit":
-      if (isDesktop()) {
+      if (canUseLocalDesktopHost()) {
         return getShellTransport().call("otools_request_app_exit")
       }
       return closeCurrentWindow()
     case "show_main_window":
-      if (isDesktop()) {
+      if (canUseLocalDesktopHost()) {
         return getShellTransport().call("otools_show_main_window")
       }
       try {
@@ -1340,12 +1344,12 @@ export async function dispatchOtoolsCommand(
     case "plugin:webview|reparent":
       return
     case "otools_get_launch_at_startup":
-      if (isDesktop()) {
+      if (canUseLocalDesktopHost()) {
         return getShellTransport().call("otools_get_launch_at_startup")
       }
       return false
     case "otools_set_launch_at_startup":
-      if (isDesktop()) {
+      if (canUseLocalDesktopHost()) {
         return getShellTransport().call("otools_set_launch_at_startup", {
           enabled: readBooleanField(payload, "enabled"),
         })
@@ -1355,19 +1359,19 @@ export async function dispatchOtoolsCommand(
       }
       return false
     case "otools_get_global_shortcut_bindings":
-      if (isDesktop()) {
+      if (canUseLocalDesktopHost()) {
         return getShellTransport().call("otools_get_global_shortcut_bindings")
       }
       return []
     case "otools_get_global_shortcut_binding":
-      if (isDesktop()) {
+      if (canUseLocalDesktopHost()) {
         return getShellTransport().call("otools_get_global_shortcut_binding", {
           pluginUuid: readStringField(payload, "pluginUuid"),
         })
       }
       return null
     case "otools_upsert_global_shortcut_binding":
-      if (isDesktop()) {
+      if (canUseLocalDesktopHost()) {
         return getShellTransport().call(
           "otools_upsert_global_shortcut_binding",
           {
@@ -1381,7 +1385,7 @@ export async function dispatchOtoolsCommand(
       }
       throw new Error("网页模式不支持 OTools 全局快捷键")
     case "otools_remove_global_shortcut_binding":
-      if (isDesktop()) {
+      if (canUseLocalDesktopHost()) {
         return getShellTransport().call(
           "otools_remove_global_shortcut_binding",
           {

@@ -95,6 +95,17 @@ const HOME_TAB: HomeTab = {
   title: "首页",
 }
 
+const BUILTIN_ICON_TEXT: Record<string, string> = {
+  config: "⚙️",
+  dbm: "🗄️",
+  dev: "🧩",
+  git: "🌿",
+  mqtt: "📡",
+  park: "🦦",
+  photopea: "🖼️",
+  term: "⌨️",
+}
+
 function buildPluginWindowLabel(plugin: OtoolsPluginInfo): string {
   return `tools-tab-plugin-${plugin.uuid}`
 }
@@ -990,7 +1001,7 @@ function PluginIcon({
   plugin: OtoolsPluginInfo
 }) {
   const iconUrl = resolvePluginIconUrl(plugin)
-  const iconText = isShortTextIcon(plugin.icon) ? plugin.icon?.trim() : ""
+  const iconText = resolvePluginIconText(plugin.icon)
   return (
     <span
       className={cn(
@@ -1044,6 +1055,7 @@ function displayName(plugin: OtoolsPluginInfo): string {
 function resolvePluginIconUrl(plugin: OtoolsPluginInfo): string | null {
   const icon = plugin.icon?.trim()
   if (!icon) return null
+  if (icon.startsWith("@builtin:")) return null
   if (isShortTextIcon(icon)) return null
   if (/^(data|https?):/i.test(icon)) return icon
   if (!plugin.assetBaseUrl) return null
@@ -1051,9 +1063,20 @@ function resolvePluginIconUrl(plugin: OtoolsPluginInfo): string | null {
   return `${base}${plugin.assetBaseUrl.replace(/\/+$/, "")}/${icon.replace(/^\/+/, "")}`
 }
 
+function resolvePluginIconText(value: string | null | undefined): string {
+  const text = value?.trim()
+  if (!text) return ""
+  if (text.startsWith("@builtin:")) {
+    const name = text.slice("@builtin:".length).trim().toLowerCase()
+    return BUILTIN_ICON_TEXT[name] || "🧰"
+  }
+  return isShortTextIcon(text) ? text : ""
+}
+
 function isShortTextIcon(value: string | null | undefined): boolean {
   const text = value?.trim()
   if (!text) return false
+  if (text.startsWith("@builtin:")) return false
   if (/^(data|https?|file):/i.test(text)) return false
   return Array.from(text).length <= 4
 }

@@ -40,6 +40,17 @@ type NoticeState = {
   text: string
 } | null
 
+const BUILTIN_ICON_TEXT: Record<string, string> = {
+  config: "⚙️",
+  dbm: "🗄️",
+  dev: "🧩",
+  git: "🌿",
+  mqtt: "📡",
+  park: "🦦",
+  photopea: "🖼️",
+  term: "⌨️",
+}
+
 export function ParkPluginView({
   marketQuery,
   onMarketQueryChange,
@@ -336,6 +347,7 @@ export function ParkPluginView({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {filtered.map((item) => {
             const key = item.uuid || item.packid
+            const iconText = resolvePluginIconText(item.icon)
             const installedPlugin = findInstalledPlugin(item)
             const meetsMinVersion =
               item.meetsMinOToolsVersion ?? item.meetsMinOtoolsVersion ?? true
@@ -347,8 +359,8 @@ export function ParkPluginView({
               >
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-background text-lg">
-                    {isShortTextIcon(item.icon) ? (
-                      item.icon
+                    {iconText ? (
+                      iconText
                     ) : item.icon ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -709,6 +721,17 @@ function EmptyState({
 function isShortTextIcon(value: string | null | undefined): boolean {
   const text = value?.trim()
   if (!text) return false
+  if (text.startsWith("@builtin:")) return false
   if (/^(data|https?|file):/i.test(text)) return false
   return Array.from(text).length <= 4
+}
+
+function resolvePluginIconText(value: string | null | undefined): string {
+  const text = value?.trim()
+  if (!text) return ""
+  if (text.startsWith("@builtin:")) {
+    const name = text.slice("@builtin:".length).trim().toLowerCase()
+    return BUILTIN_ICON_TEXT[name] || "🧰"
+  }
+  return isShortTextIcon(text) ? text : ""
 }
