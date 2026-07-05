@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use chrono::Local;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
@@ -1177,5 +1177,72 @@ pub async fn park_uninstall_plugin(
         display_name_cn,
         all_plugins_count: all_plugins.len(),
         message: format!("插件 {display_name} 已卸载"),
+    })
+}
+
+pub fn supports_plugin(plugin_uuid: &str) -> bool {
+    matches!(
+        plugin_uuid.trim().to_ascii_lowercase().as_str(),
+        "otools-park" | "park"
+    )
+}
+
+pub async fn dispatch_command(command: &str, payload: Value) -> Result<Value, HostError> {
+    match command {
+        "park_get_workspace" => {
+            let params = command_payload::<ParkWorkspaceParam>(payload)?;
+            command_result(park_get_workspace(params.cate).await?)
+        }
+        "park_install_plugin" => {
+            let params = command_payload::<InputParam<ParkInstallInput>>(payload)?;
+            command_result(park_install_plugin(params.input).await?)
+        }
+        "park_install_offline_plugin" => {
+            let params = command_payload::<FilePathParam>(payload)?;
+            command_result(park_install_offline_plugin(params.file_path).await?)
+        }
+        "park_uninstall_plugin" => {
+            let params = command_payload::<InputParam<ParkUninstallInput>>(payload)?;
+            command_result(park_uninstall_plugin(params.input).await?)
+        }
+        _ => Err(HostError::not_found(format!(
+            "Unsupported otools-park command: {command}"
+        ))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InputParam<T> {
+    input: T,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ParkWorkspaceParam {
+    cate: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FilePathParam {
+    file_path: String,
+}
+
+fn command_payload<T: DeserializeOwned>(payload: Value) -> Result<T, HostError> {
+    let payload = if payload.is_null() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        payload
+    };
+    serde_json::from_value(payload).map_err(|error| {
+        HostError::invalid_input("Invalid plugin command payload").with_detail(error.to_string())
+    })
+}
+
+fn command_result<T: Serialize>(value: T) -> Result<Value, HostError> {
+    serde_json::to_value(value).map_err(|error| {
+        HostError::task_execution_failed("Failed to serialize plugin command result")
+            .with_detail(error.to_string())
     })
 }

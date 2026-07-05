@@ -11,8 +11,8 @@ use serde_json::Value;
 use crate::app_error::AppCommandError;
 use crate::commands::otools::{
     self, DevBindDirectoryInput, DevPluginInput, DevPluginUpdateInput, DevPublishVersionInput,
-    OtoolsNativeInvokeRequest, ParkInstallInput, ParkUninstallInput, WebviewRenameEntryRequest,
-    WebviewWriteFileRequest,
+    OtoolsNativeInvokeRequest, OtoolsPluginCommandInvokeRequest, ParkInstallInput,
+    ParkUninstallInput, WebviewRenameEntryRequest, WebviewWriteFileRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -738,6 +738,19 @@ pub async fn otools_ai_save_chat_history(
 ) -> Result<Json<()>, AppCommandError> {
     otools::otools_ai_save_chat_history(params.prefix, params.messages).await?;
     Ok(Json(()))
+}
+
+pub async fn otools_plugin_command_invoke(
+    Json(request): Json<OtoolsPluginCommandInvokeRequest>,
+) -> Result<Json<Value>, AppCommandError> {
+    Ok(Json(
+        otools::otools_plugin_command_invoke(
+            request.plugin_uuid,
+            request.command,
+            request.payload,
+        )
+        .await?,
+    ))
 }
 
 pub async fn otools_emit_tools_shell_shortcut(

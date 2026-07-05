@@ -27,6 +27,9 @@ import type {
   ParkWorkspace,
 } from "./types"
 
+const OTOOLS_DEV_PLUGIN_UUID = "otools-dev"
+const OTOOLS_PARK_PLUGIN_UUID = "otools-park"
+
 export async function openOtoolsWindow(source?: string): Promise<void> {
   if (isDesktop()) {
     return getShellTransport().call("open_otools_window", {
@@ -170,62 +173,84 @@ export async function invokeOtoolsNative<T = unknown>(
   })
 }
 
+export async function invokeOtoolsPluginCommand<T = unknown>(
+  pluginUuid: string,
+  command: string,
+  payload?: unknown
+): Promise<T> {
+  return getTransport().call("otools_plugin_command_invoke", {
+    pluginUuid,
+    command,
+    payload: payload ?? null,
+  })
+}
+
+function invokeDevCommand<T>(command: string, payload?: unknown): Promise<T> {
+  return invokeOtoolsPluginCommand<T>(OTOOLS_DEV_PLUGIN_UUID, command, payload)
+}
+
+function invokeParkCommand<T>(command: string, payload?: unknown): Promise<T> {
+  return invokeOtoolsPluginCommand<T>(OTOOLS_PARK_PLUGIN_UUID, command, payload)
+}
+
 export async function getDevWorkspace(): Promise<DevWorkspace> {
-  return getTransport().call("dev_get_workspace")
+  return invokeDevCommand<DevWorkspace>("dev_get_workspace")
 }
 
 export async function createDevPlugin(
   input: DevPluginInput
 ): Promise<DevPluginActionResult> {
-  return getTransport().call("dev_create_plugin", { input })
+  return invokeDevCommand<DevPluginActionResult>("dev_create_plugin", { input })
 }
 
 export async function updateDevPlugin(
   uuid: string,
   meta: DevPluginInput
 ): Promise<DevPluginActionResult> {
-  return getTransport().call("dev_update_plugin", { input: { uuid, meta } })
+  return invokeDevCommand<DevPluginActionResult>("dev_update_plugin", {
+    input: { uuid, meta },
+  })
 }
 
 export async function bindDevPluginDirectory(
   uuid: string,
   directoryPath: string
 ): Promise<DevPluginActionResult> {
-  return getTransport().call("dev_bind_plugin_directory", {
+  return invokeDevCommand<DevPluginActionResult>("dev_bind_plugin_directory", {
     input: { uuid, directoryPath },
   })
 }
 
 export async function enableDevDebug(uuid: string): Promise<string> {
-  return getTransport().call("dev_enable_debug", { uuid })
+  return invokeDevCommand<string>("dev_enable_debug", { uuid })
 }
 
 export async function disableDevDebug(uuid: string): Promise<string> {
-  return getTransport().call("dev_disable_debug", { uuid })
+  return invokeDevCommand<string>("dev_disable_debug", { uuid })
 }
 
 export async function initializeDevVueProject(uuid: string): Promise<string> {
-  return getTransport().call("dev_initialize_vue_project", { uuid })
+  return invokeDevCommand<string>("dev_initialize_vue_project", { uuid })
 }
 
 export async function initializeDevNativeProject(
   uuid: string
 ): Promise<string> {
-  return getTransport().call("dev_initialize_native_project", { uuid })
+  return invokeDevCommand<string>("dev_initialize_native_project", { uuid })
 }
 
 export async function buildDevNativePlugin(uuid: string): Promise<string> {
-  return getTransport().call("dev_build_native_plugin", { uuid })
+  return invokeDevCommand<string>("dev_build_native_plugin", { uuid })
 }
 
 export async function buildDevNativeArtifact(uuid: string): Promise<string> {
-  return getTransport().call("dev_build_native_artifact", { uuid })
+  return invokeDevCommand<string>("dev_build_native_artifact", { uuid })
 }
 
 export async function buildDevNativeArtifactFromDir(
   directoryPath: string
 ): Promise<string> {
-  return getTransport().call("dev_build_native_artifact_from_dir", {
+  return invokeDevCommand<string>("dev_build_native_artifact_from_dir", {
     directoryPath,
   })
 }
@@ -233,40 +258,49 @@ export async function buildDevNativeArtifactFromDir(
 export async function startDevNativePluginBuild(
   uuid: string
 ): Promise<DevNativeBuildJobStart> {
-  return getTransport().call("dev_start_native_plugin_build", { uuid })
+  return invokeDevCommand<DevNativeBuildJobStart>(
+    "dev_start_native_plugin_build",
+    { uuid }
+  )
 }
 
 export async function startDevNativeArtifactBuildFromDir(
   directoryPath: string
 ): Promise<DevNativeBuildJobStart> {
-  return getTransport().call("dev_start_native_artifact_build_from_dir", {
-    directoryPath,
-  })
+  return invokeDevCommand<DevNativeBuildJobStart>(
+    "dev_start_native_artifact_build_from_dir",
+    {
+      directoryPath,
+    }
+  )
 }
 
 export async function getDevNativeBuildJob(
   jobId: string
 ): Promise<DevNativeBuildJobSnapshot> {
-  return getTransport().call("dev_get_native_build_job", { jobId })
+  return invokeDevCommand<DevNativeBuildJobSnapshot>(
+    "dev_get_native_build_job",
+    { jobId }
+  )
 }
 
 export async function getDevNativeConfig(
   uuid: string
 ): Promise<DevNativeConfig> {
-  return getTransport().call("dev_get_native_config", { uuid })
+  return invokeDevCommand<DevNativeConfig>("dev_get_native_config", { uuid })
 }
 
 export async function setDevNativeEnabled(
   uuid: string,
   enabled: boolean
 ): Promise<string> {
-  return getTransport().call("dev_set_native_enabled", { uuid, enabled })
+  return invokeDevCommand<string>("dev_set_native_enabled", { uuid, enabled })
 }
 
 export async function packDevPlugin(
   uuid: string
 ): Promise<DevPluginActionResult> {
-  return getTransport().call("dev_pack_plugin", { uuid })
+  return invokeDevCommand<DevPluginActionResult>("dev_pack_plugin", { uuid })
 }
 
 export async function probeDevNativePlugin(
@@ -282,7 +316,9 @@ export async function reloadDevNativePlugin(uuid: string): Promise<string> {
 export async function publishDevVersion(
   input: DevPublishVersionInput
 ): Promise<DevPluginActionResult> {
-  return getTransport().call("dev_publish_version", { input })
+  return invokeDevCommand<DevPluginActionResult>("dev_publish_version", {
+    input,
+  })
 }
 
 export async function reloadOtoolsPlugins(): Promise<void> {
@@ -306,25 +342,31 @@ export async function openProjectInTerminal(workingDir: string): Promise<void> {
 }
 
 export async function getParkWorkspace(cate?: string): Promise<ParkWorkspace> {
-  return getTransport().call("park_get_workspace", { cate })
+  return invokeParkCommand<ParkWorkspace>("park_get_workspace", { cate })
 }
 
 export async function installParkPlugin(
   item: ParkCatalogItem
 ): Promise<ParkInstallResult> {
-  return getTransport().call("park_install_plugin", { input: { item } })
+  return invokeParkCommand<ParkInstallResult>("park_install_plugin", {
+    input: { item },
+  })
 }
 
 export async function installOfflineParkPlugin(
   filePath: string
 ): Promise<ParkInstallResult> {
-  return getTransport().call("park_install_offline_plugin", { filePath })
+  return invokeParkCommand<ParkInstallResult>("park_install_offline_plugin", {
+    filePath,
+  })
 }
 
 export async function uninstallParkPlugin(
   item: ParkCatalogItem
 ): Promise<ParkUninstallResult> {
-  return getTransport().call("park_uninstall_plugin", { input: { item } })
+  return invokeParkCommand<ParkUninstallResult>("park_uninstall_plugin", {
+    input: { item },
+  })
 }
 
 export function buildOtoolsPluginUrl(plugin: OtoolsPluginInfo): string {

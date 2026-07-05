@@ -98,6 +98,15 @@ pub struct OtoolsNativeInvokeRequest {
     pub payload: Value,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtoolsPluginCommandInvokeRequest {
+    pub plugin_uuid: String,
+    pub command: String,
+    #[serde(default)]
+    pub payload: Value,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OtoolsAssetPayload {
@@ -206,6 +215,25 @@ pub async fn otools_ai_save_chat_history(
     messages: Vec<OtoolsAiChatMessageRecord>,
 ) -> Result<(), HostError> {
     otools_ai::save_chat_history(prefix, messages).await
+}
+
+pub async fn otools_plugin_command_invoke(
+    request: OtoolsPluginCommandInvokeRequest,
+) -> Result<Value, HostError> {
+    let plugin_uuid = validate_plugin_id(&request.plugin_uuid)?;
+    let command = validate_plugin_command(&request.command)?;
+    if otools_plugin_dev::supports_plugin(&plugin_uuid) {
+        return otools_plugin_dev::dispatch_command(&command, request.payload).await;
+    }
+    if otools_plugin_nav::supports_plugin(&plugin_uuid) {
+        return otools_plugin_nav::dispatch_command(&command, request.payload).await;
+    }
+    if otools_plugin_park::supports_plugin(&plugin_uuid) {
+        return otools_plugin_park::dispatch_command(&command, request.payload).await;
+    }
+    Err(HostError::not_found(format!(
+        "No OTools host dispatcher registered for plugin: {plugin_uuid}"
+    )))
 }
 
 pub async fn otools_emit_tools_shell_shortcut(action: String) -> Result<(), HostError> {
@@ -518,6 +546,19 @@ fn validate_plugin_id(value: &str) -> Result<String, HostError> {
 
 pub fn validate_plugin_id_for_host(value: &str) -> Result<String, HostError> {
     validate_plugin_id(value)
+}
+
+fn validate_plugin_command(value: &str) -> Result<String, HostError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 128
+        || !trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return Err(HostError::invalid_input("Invalid OTools plugin command"));
+    }
+    Ok(trimmed.to_string())
 }
 
 pub fn validate_tools_shell_shortcut_action(value: &str) -> Result<String, HostError> {

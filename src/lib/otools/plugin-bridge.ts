@@ -21,6 +21,7 @@ import {
   getOtoolsConfigValue,
   getOtoolsPluginAsset,
   invokeOtoolsNative,
+  invokeOtoolsPluginCommand,
   probeDevNativePlugin,
   reloadDevNativePlugin,
   saveOtoolsConfig,
@@ -181,8 +182,6 @@ const CONFIG_COMMANDS = new Set([
   "get_otools_config_value",
   "save_otools_config_value",
 ])
-const HOST_FORWARD_PREFIXES = ["dev_", "park_"]
-
 const WINDOW_LABEL = "otools"
 const LOCAL_TERMINAL_OUTPUT_EVENT = "local-terminal-output"
 const LOCAL_TERMINAL_STATUS_EVENT = "local-terminal-status"
@@ -545,6 +544,21 @@ function formatBridgeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function isPluginHostDispatcherMiss(error: unknown): boolean {
+  const record = asRecord(error)
+  const code =
+    typeof record?.code === "string" ? record.code.toLowerCase() : ""
+  const message =
+    typeof record?.message === "string"
+      ? record.message
+      : formatBridgeError(error)
+  return (
+    code === "not_found" &&
+    (message.includes("No OTools host dispatcher registered") ||
+      message.includes("Unsupported otools-"))
+  )
+}
+
 export async function loadOtoolsPluginDocument(
   entryUrl: string,
   plugin: OtoolsPluginInfo
@@ -709,10 +723,6 @@ async function dispatchOtoolsCommand(
       ...buildStateCommandPayload(targetPluginUuid, payload),
       patch: extractPatchPayload(payload) ?? {},
     })
-  }
-
-  if (HOST_FORWARD_PREFIXES.some((prefix) => command.startsWith(prefix))) {
-    return getTransport().call(command, asRecord(payload) ?? {})
   }
 
   if (FILESYSTEM_COMMANDS.has(command)) {
@@ -1148,6 +1158,14 @@ async function dispatchOtoolsCommand(
     return {
       ok: true,
       pluginUuid: targetPluginUuid,
+    }
+  }
+
+  try {
+    return await invokeOtoolsPluginCommand(targetPluginUuid, command, payload)
+  } catch (error) {
+    if (!isPluginHostDispatcherMiss(error)) {
+      throw error
     }
   }
 

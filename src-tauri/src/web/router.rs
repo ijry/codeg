@@ -446,6 +446,10 @@ pub fn build_router(
             post(handlers::otools::otools_ai_save_chat_history),
         )
         .route(
+            "/otools_plugin_command_invoke",
+            post(handlers::otools::otools_plugin_command_invoke),
+        )
+        .route(
             "/otools_emit_tools_shell_shortcut",
             post(handlers::otools::otools_emit_tools_shell_shortcut),
         )

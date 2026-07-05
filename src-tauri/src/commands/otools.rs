@@ -9,7 +9,7 @@ pub use otools_host::{
     DevPluginActionResult, DevPluginInput, DevPluginUpdateInput, DevPublishVersionInput,
     DevWorkspace, FsItem, OtoolsAiChatMessageRecord, OtoolsAiGenerateTextRequest,
     OtoolsAssetPayload, OtoolsConfig, OtoolsConfigTab, OtoolsCopiedFile, OtoolsHostInfo,
-    OtoolsNativeInvokeRequest,
+    OtoolsNativeInvokeRequest, OtoolsPluginCommandInvokeRequest,
     OtoolsNavigationResult, OtoolsPluginInfo, ParkInstallInput, ParkInstallResult,
     ParkUninstallInput, ParkUninstallResult, ParkWorkspace, ProjectScriptsResponse, SavedImage,
     WebviewDirEntry, WebviewReadFilePayload, WebviewRenameEntryRequest, WebviewWriteFileRequest,
@@ -576,6 +576,21 @@ pub async fn otools_ai_save_chat_history(
     otools_host::otools_ai_save_chat_history(prefix, messages)
         .await
         .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_plugin_command_invoke(
+    plugin_uuid: String,
+    command: String,
+    payload: Value,
+) -> Result<Value, AppCommandError> {
+    otools_host::otools_plugin_command_invoke(OtoolsPluginCommandInvokeRequest {
+        plugin_uuid,
+        command,
+        payload,
+    })
+    .await
+    .map_err(map_host_error)
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]

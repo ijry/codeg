@@ -1105,6 +1105,7 @@ mod tauri_app {
                 otools_commands::otools_host_repair_json_text,
                 otools_commands::otools_ai_load_chat_history,
                 otools_commands::otools_ai_save_chat_history,
+                otools_commands::otools_plugin_command_invoke,
                 otools_commands::otools_emit_tools_shell_shortcut,
                 otools_commands::otools_native_invoke,
                 otools_commands::native_plugin_invoke,
