@@ -1,0 +1,8 @@
+[package]
+name = "ot-host-dispatch"
+version = "0.1.0"
+edition = "2021"
+description = "Compatibility shim for legacy OTools host dispatch"
+
+[dependencies]
+otools-platform-host-dispatch = { path = "../../platform/host-dispatch" }

@@ -1,0 +1,13 @@
+[package]
+name = "otools-plugin-dev-package"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../../../core" }
+otools-plugin-dev-state = { path = "../state" }
+otools-plugin-dev-workspace = { path = "../workspace" }
+otools-plugin-dev-park-sync = { path = "../park-sync" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = "2"

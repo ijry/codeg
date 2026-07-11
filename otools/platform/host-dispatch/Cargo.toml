@@ -1,0 +1,22 @@
+[package]
+name = "otools-platform-host-dispatch"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["legacy-compat"]
+legacy-compat = [
+    "dep:otools-platform-lifecycle-registry",
+    "dep:otools-platform-package-manager",
+    "dep:otools-platform-ssh",
+]
+
+[dependencies]
+async-trait = "0.1"
+otools-core = { path = "../../core" }
+otools-platform-http-client = { path = "../http-client" }
+otools-platform-lifecycle-registry = { path = "../lifecycle-registry", optional = true }
+otools-platform-package-manager = { path = "../package-manager", optional = true }
+otools-platform-ssh = { path = "../ssh", optional = true }
+otools-plugin-state = { path = "../plugin-state" }
+serde_json = "1"

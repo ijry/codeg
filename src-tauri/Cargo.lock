@@ -1202,7 +1202,9 @@ dependencies = [
  "otools-host",
  "otools-lifecycle",
  "otools-platform-app",
+ "otools-platform-noder",
  "otools-platform-shortcuts",
+ "otools-platform-webview",
  "portable-pty",
  "prost",
  "qrcode",
@@ -3771,6 +3773,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "libssh2-sys"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c04141a07bb0c0bc461cb657808764de571702a59bc5c726c400ac9a7625e3ab"
+dependencies = [
+ "cc",
+ "libc",
+ "libz-sys",
+ "openssl-sys",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
+name = "libz-sys"
+version = "1.1.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85bc9657773828b90eeb625adff10eeac83cc21bbfd8e23a03eaa8a33c9e28d9"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4710,20 +4738,21 @@ dependencies = [
 name = "otools-host"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
- "dirs 6.0.0",
  "otools-ai",
  "otools-core",
  "otools-platform-filesystem",
  "otools-platform-host",
- "otools-platform-native",
+ "otools-platform-host-info",
+ "otools-platform-native-host",
+ "otools-platform-noder",
  "otools-plugin-config",
  "otools-plugin-dev",
+ "otools-plugin-dispatcher",
  "otools-plugin-park",
+ "otools-plugin-registry",
  "otools-plugin-state",
  "serde",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
@@ -4731,9 +4760,9 @@ name = "otools-lifecycle"
 version = "0.1.0"
 dependencies = [
  "otools-core",
- "otools-platform-native",
- "otools-plugin-dev",
- "otools-plugin-park",
+ "otools-platform-lifecycle-registry",
+ "otools-plugin-dispatcher",
+ "otools-plugin-registry",
  "serde",
  "serde_json",
  "tokio",
@@ -4770,32 +4799,95 @@ dependencies = [
 name = "otools-platform-host"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
- "chrono",
- "csv",
- "dirs 6.0.0",
  "otools-core",
  "otools-platform-clipboard",
+ "otools-platform-http-client",
  "otools-platform-package-manager",
+ "otools-platform-process",
+ "otools-platform-project",
  "otools-platform-shell",
+ "otools-platform-ssh",
+ "otools-platform-storage",
  "otools-platform-upload",
+ "otools-platform-webview-fs",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-platform-host-dispatch"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "otools-core",
+ "otools-platform-http-client",
+ "otools-plugin-state",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-platform-host-info"
+version = "0.1.0"
+dependencies = [
+ "dirs 6.0.0",
+ "otools-core",
+ "otools-plugin-registry",
+ "serde",
+ "uuid",
+]
+
+[[package]]
+name = "otools-platform-http-client"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "otools-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "walkdir",
 ]
+
+[[package]]
+name = "otools-platform-lifecycle-registry"
+version = "0.1.0"
 
 [[package]]
 name = "otools-platform-native"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "libloading 0.8.9",
  "otools-core",
- "otools-plugin-state",
- "reqwest 0.12.28",
+ "otools-platform-host-dispatch",
+ "otools-platform-native-contract",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "otools-platform-native-contract"
+version = "0.1.0"
+
+[[package]]
+name = "otools-platform-native-host"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-platform-native",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-platform-noder"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "dirs 6.0.0",
+ "http",
+ "lazy_static",
+ "libc",
+ "serde",
+ "serde_json",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4804,15 +4896,37 @@ version = "0.1.0"
 dependencies = [
  "encoding_rs",
  "libc",
+ "otools-platform-process",
  "serde",
  "uuid",
  "windows-sys 0.59.0",
 ]
 
 [[package]]
+name = "otools-platform-process"
+version = "0.1.0"
+dependencies = [
+ "csv",
+ "otools-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-platform-project"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-platform-process",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "otools-platform-shell"
 version = "0.1.0"
 dependencies = [
+ "otools-platform-process",
  "trash",
 ]
 
@@ -4829,6 +4943,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "otools-platform-ssh"
+version = "0.1.0"
+dependencies = [
+ "dirs 6.0.0",
+ "serde",
+ "serde_json",
+ "ssh2",
+]
+
+[[package]]
+name = "otools-platform-storage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs 6.0.0",
+ "otools-core",
+ "serde_json",
+ "walkdir",
+]
+
+[[package]]
 name = "otools-platform-upload"
 version = "0.1.0"
 dependencies = [
@@ -4839,6 +4974,29 @@ dependencies = [
  "serde",
  "sha1",
  "uuid",
+]
+
+[[package]]
+name = "otools-platform-webview"
+version = "0.1.0"
+dependencies = [
+ "otools-platform-host",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin-dialog",
+ "url",
+]
+
+[[package]]
+name = "otools-platform-webview-fs"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "dirs 6.0.0",
+ "otools-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4854,13 +5012,182 @@ dependencies = [
 name = "otools-plugin-dev"
 version = "0.1.0"
 dependencies = [
+ "otools-core",
+ "otools-plugin-dev-actions",
+ "otools-plugin-dev-api",
+ "otools-plugin-dev-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-plugin-dev-actions"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-dev-api",
+ "otools-plugin-dev-debug",
+ "otools-plugin-dev-manifest",
+ "otools-plugin-dev-model",
+ "otools-plugin-dev-native-build",
+ "otools-plugin-dev-package",
+ "otools-plugin-dev-repo-sync",
+ "otools-plugin-dev-scaffold",
+ "otools-plugin-dev-state",
+ "otools-plugin-dev-workspace",
+]
+
+[[package]]
+name = "otools-plugin-dev-api"
+version = "0.1.0"
+dependencies = [
+ "otools-plugin-dev-state",
+ "serde",
+]
+
+[[package]]
+name = "otools-plugin-dev-debug"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-dev-preview",
+ "otools-plugin-dev-state",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-plugin-dev-manifest"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-dev-api",
+ "otools-plugin-dev-state",
+ "otools-plugin-support",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-plugin-dev-model"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-support",
+ "serde",
+ "url",
+]
+
+[[package]]
+name = "otools-plugin-dev-native-build"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-platform-native-contract",
+ "otools-plugin-dev-api",
+ "otools-plugin-dev-state",
+ "otools-plugin-support",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "otools-plugin-dev-package"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-dev-park-sync",
+ "otools-plugin-dev-state",
+ "otools-plugin-dev-workspace",
+ "serde",
+ "serde_json",
+ "zip 2.4.2",
+]
+
+[[package]]
+name = "otools-plugin-dev-park-sync"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-dev-preview",
+ "otools-plugin-dev-state",
+ "otools-plugin-park-local-catalog",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-plugin-dev-preview"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "url",
+]
+
+[[package]]
+name = "otools-plugin-dev-repo-sync"
+version = "0.1.0"
+dependencies = [
  "chrono",
+ "otools-core",
+ "otools-plugin-dev-model",
+ "otools-plugin-dev-package",
+ "otools-plugin-dev-state",
+ "otools-plugin-support",
+ "uuid",
+]
+
+[[package]]
+name = "otools-plugin-dev-scaffold"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-dev-state",
+ "otools-plugin-support",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "otools-plugin-dev-state"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "otools-core",
+ "otools-plugin-dev-model",
+ "otools-plugin-support",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "otools-plugin-dev-workspace"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-dev-api",
+ "otools-plugin-dev-state",
+ "otools-plugin-support",
+]
+
+[[package]]
+name = "otools-plugin-dispatcher"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-platform-native",
+ "otools-plugin-dev",
+ "otools-plugin-park",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "otools-plugin-package"
+version = "0.1.0"
+dependencies = [
  "otools-core",
  "serde",
  "serde_json",
- "url",
- "uuid",
- "walkdir",
  "zip 2.4.2",
 ]
 
@@ -4868,14 +5195,116 @@ dependencies = [
 name = "otools-plugin-park"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "otools-core",
- "reqwest 0.12.28",
- "semver",
+ "otools-plugin-park-catalog",
+ "otools-plugin-park-download",
+ "otools-plugin-park-install",
+ "otools-plugin-park-install-record",
+ "otools-plugin-park-installed",
+ "otools-plugin-park-local-catalog",
+ "otools-plugin-park-workspace",
+ "otools-plugin-support",
  "serde",
  "serde_json",
  "url",
- "zip 2.4.2",
+]
+
+[[package]]
+name = "otools-plugin-park-catalog"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "semver",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-plugin-park-download"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "reqwest 0.12.28",
+ "url",
+]
+
+[[package]]
+name = "otools-plugin-park-install"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "otools-core",
+ "otools-plugin-package",
+ "otools-plugin-park-catalog",
+ "otools-plugin-park-download",
+ "otools-plugin-park-install-record",
+ "otools-plugin-support",
+ "serde",
+]
+
+[[package]]
+name = "otools-plugin-park-install-record"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-package",
+ "otools-plugin-park-catalog",
+ "otools-plugin-support",
+]
+
+[[package]]
+name = "otools-plugin-park-installed"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-park-catalog",
+ "otools-plugin-support",
+ "url",
+]
+
+[[package]]
+name = "otools-plugin-park-local-catalog"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-plugin-park-market"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-park-catalog",
+ "reqwest 0.12.28",
+ "serde",
+]
+
+[[package]]
+name = "otools-plugin-park-workspace"
+version = "0.1.0"
+dependencies = [
+ "otools-core",
+ "otools-plugin-park-catalog",
+ "otools-plugin-park-installed",
+ "otools-plugin-park-local-catalog",
+ "otools-plugin-park-market",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "otools-plugin-registry"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "otools-core",
+ "otools-platform-http-client",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -4885,6 +5314,10 @@ dependencies = [
  "otools-core",
  "serde_json",
 ]
+
+[[package]]
+name = "otools-plugin-support"
+version = "0.1.0"
 
 [[package]]
 name = "ouroboros"
@@ -7405,6 +7838,18 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "ssh2"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c95eb3c09e378543395a3fa9796f897861862466ee331d59140ade4ea0dcfdfc"
+dependencies = [
+ "bitflags 2.10.0",
+ "libc",
+ "libssh2-sys",
+ "parking_lot",
 ]
 
 [[package]]

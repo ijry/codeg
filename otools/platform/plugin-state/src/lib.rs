@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use otools_core::catalog;
-use otools_core::HostError;
+use otools_core::{validate_plugin_id, HostError};
 use serde_json::{Map, Value};
 
 const OTOOLS_LOCAL_DATA_DIR: &str = "local";
@@ -36,6 +36,7 @@ pub fn otools_plugin_state_get(
     plugin_uuid: String,
     state_kind: Option<String>,
 ) -> Result<Value, HostError> {
+    let plugin_uuid = validate_plugin_id(&plugin_uuid)?;
     let store = parse_state_store(state_kind.as_deref())?;
     Ok(read_plugin_state(&plugin_uuid, store, None)?.unwrap_or(Value::Null))
 }
@@ -45,6 +46,7 @@ pub fn otools_plugin_state_set(
     state_kind: Option<String>,
     state: Value,
 ) -> Result<(), HostError> {
+    let plugin_uuid = validate_plugin_id(&plugin_uuid)?;
     let store = parse_state_store(state_kind.as_deref())?;
     save_plugin_state(&plugin_uuid, store, None, state)
 }

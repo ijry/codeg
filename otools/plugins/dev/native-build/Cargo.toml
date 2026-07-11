@@ -1,0 +1,13 @@
+[package]
+name = "otools-plugin-dev-native-build"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../../../core" }
+otools-plugin-dev-api = { path = "../api" }
+otools-plugin-dev-state = { path = "../state" }
+otools-plugin-support = { path = "../../support" }
+otools-platform-native-contract = { path = "../../../platform/native-contract" }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }

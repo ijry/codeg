@@ -1,0 +1,10 @@
+[package]
+name = "otools-plugin-park-install-record"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../../../core" }
+otools-plugin-package = { path = "../../package" }
+otools-plugin-park-catalog = { path = "../catalog" }
+otools-plugin-support = { path = "../../support" }

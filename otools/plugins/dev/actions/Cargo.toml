@@ -1,0 +1,17 @@
+[package]
+name = "otools-plugin-dev-actions"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../../../core" }
+otools-plugin-dev-api = { path = "../api" }
+otools-plugin-dev-debug = { path = "../debug" }
+otools-plugin-dev-manifest = { path = "../manifest" }
+otools-plugin-dev-model = { path = "../model" }
+otools-plugin-dev-native-build = { path = "../native-build" }
+otools-plugin-dev-package = { path = "../package" }
+otools-plugin-dev-repo-sync = { path = "../repo-sync" }
+otools-plugin-dev-scaffold = { path = "../scaffold" }
+otools-plugin-dev-state = { path = "../state" }
+otools-plugin-dev-workspace = { path = "../workspace" }

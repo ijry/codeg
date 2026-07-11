@@ -1,0 +1,7 @@
+[package]
+name = "ot-run-mode"
+version = "0.1.0"
+edition = "2021"
+description = "Compatibility shim for legacy OTools run mode"
+
+[dependencies]

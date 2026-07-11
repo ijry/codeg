@@ -3,16 +3,51 @@ export interface OtoolsPluginInfo {
   packid: string
   displayName: string
   displayNameCn?: string | null
+  displayNameCN?: string | null
   developerName?: string | null
   summary?: string | null
+  screenshots: string[]
   version?: string | null
+  minOtoolsVersion?: string | null
+  minOToolsVersion?: string | null
   icon?: string | null
+  key: string[]
   entry: string
+  preload?: string | null
+  hasAd: boolean
+  inPluginPurchase: boolean
+  devUrl?: string | null
+  quickDev?: boolean | null
   openInBrowser: boolean
   nativeEnabled: boolean
   permissions: string[]
+  autostart?: OtoolsPluginAutostart | null
+  shutdownHooks?: OtoolsPluginShutdownHook[] | null
+  enabled: boolean
+  builtin?: boolean | null
   source: string
   assetBaseUrl: string
+}
+
+export interface OtoolsPluginAutostartTask {
+  command: string
+  args?: Record<string, unknown> | null
+  ignoreErrorIncludes: string[]
+}
+
+export interface OtoolsPluginAutostart {
+  enabled?: boolean | null
+  once?: boolean | null
+  tasks: OtoolsPluginAutostartTask[]
+}
+
+export interface OtoolsPluginShutdownHook {
+  actionId: string
+  hookId?: string | null
+  description?: string | null
+  order?: number | null
+  timeoutMs?: number | null
+  enabled?: boolean | null
 }
 
 export interface OtoolsNavigationResult {

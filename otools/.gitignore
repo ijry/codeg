@@ -1,5 +1,10 @@
 dist/
+!sdk/plugin-sdk/dist/
+!sdk/plugin-sdk/dist/**
 lib/
 native/target/
 host/target/
 host/Cargo.lock
+platform/**/target/
+platform/**/Cargo.lock
+**/target/

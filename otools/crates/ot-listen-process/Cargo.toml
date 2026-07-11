@@ -1,0 +1,8 @@
+[package]
+name = "ot-listen-process"
+version = "0.1.0"
+edition = "2021"
+description = "Compatibility shim for legacy OTools listen process helpers"
+
+[dependencies]
+otools-platform-process = { path = "../../platform/process" }

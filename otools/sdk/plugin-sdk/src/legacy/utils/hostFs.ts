@@ -1,0 +1,30 @@
+export {
+  browseHostDialog,
+  createHostDir,
+  homeHostDir,
+  joinHostPath,
+  listHostDir,
+  pickHostFiles,
+  pickHostFolderEntry as pickHostFolder,
+  pickHostSavePath,
+  readHostFile,
+  removeHostEntry,
+  renameHostEntry,
+  touchHostFile,
+  writeHostFile,
+} from "../platform/host-services/fs";
+
+export type {
+  HostBrowseDialogPayload,
+  HostBrowseDialogRequest,
+  HostDirEntry,
+  HostFileFilter,
+  HostFilePickerOptions,
+  HostPickedFile,
+  HostPickedFolder,
+  HostPickFolderOptions,
+  HostReadFilePayload,
+  HostSaveFileMeta,
+  HostSaveFileOptions,
+  HostWriteFileRequest,
+} from "../platform/host-services/fs";

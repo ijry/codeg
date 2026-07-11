@@ -1,0 +1,11 @@
+[package]
+name = "otools-plugin-dev-park-sync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../../../core" }
+otools-plugin-dev-preview = { path = "../preview" }
+otools-plugin-dev-state = { path = "../state" }
+otools-plugin-park-local-catalog = { path = "../../park/local-catalog" }
+serde_json = "1"

@@ -109,6 +109,7 @@ export async function revealItemInDir(path: string): Promise<void> {
  */
 export async function openFileDialog(options?: {
   directory?: boolean
+  filters?: Array<{ name: string; extensions: string[] }>
   multiple?: boolean
   title?: string
   defaultPath?: string
@@ -128,6 +129,13 @@ export async function openFileDialog(options?: {
   return new Promise((resolve) => {
     const input = document.createElement("input")
     input.type = "file"
+    if (options?.filters?.length) {
+      input.accept = options.filters
+        .flatMap((filter) =>
+          filter.extensions.map((extension) => `.${extension.replace(/^\./, "")}`)
+        )
+        .join(",")
+    }
     if (options?.multiple) input.multiple = true
     input.onchange = () => {
       if (!input.files?.length) {

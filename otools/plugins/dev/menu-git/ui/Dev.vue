@@ -492,7 +492,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import {
+  computed,
+  defineComponent,
+  h,
+  nextTick,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+  type PropType,
+} from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { homeDir, join } from '@/utils/remotePath';
 import { listHostDir, type HostDirEntry } from '@/utils/hostFs';
@@ -515,7 +525,6 @@ import {
   getProjectRunErrorMessage,
   runProjectCommand,
 } from '@/platform/services/project-runner/commandRunner';
-import RepositoryEditor from '../../../../plugins/otools-git/src/RepositoryEditor.vue';
 import DevCreateDialog from './DevCreateDialog.vue';
 import DevPublishVersionDialog from './DevPublishVersionDialog.vue';
 import DevStandaloneNativeBuild from './DevStandaloneNativeBuild.vue';
@@ -534,6 +543,28 @@ interface EditorRepoInfo {
   path: string;
   isRoot?: boolean;
 }
+
+const RepositoryEditor = defineComponent({
+  name: 'DevRepositoryEditorPlaceholder',
+  props: {
+    repo: {
+      type: Object as PropType<EditorRepoInfo>,
+      required: true,
+    },
+  },
+  setup(props) {
+    return () =>
+      h('div', { class: 'repository-editor-placeholder' }, [
+        h('div', { class: 'repository-editor-placeholder-title' }, props.repo.label),
+        h('div', { class: 'repository-editor-placeholder-path' }, props.repo.path),
+        h(
+          'div',
+          { class: 'repository-editor-placeholder-note' },
+          'Repository editing is provided by external git plugins.'
+        ),
+      ]);
+  },
+});
 
 interface DevNativeBuildJobStart {
   jobId: string;
@@ -1687,6 +1718,34 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.repository-editor-placeholder {
+  height: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--el-text-color-regular);
+}
+
+.repository-editor-placeholder-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.repository-editor-placeholder-path {
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--el-text-color-secondary);
+}
+
+.repository-editor-placeholder-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .run-tab-shell {

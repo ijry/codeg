@@ -30,7 +30,7 @@ import {
   setOtoolsLaunchAtStartup,
   saveOtoolsConfigValue,
 } from "@/lib/otools/api"
-import { isDesktop } from "@/lib/transport"
+import { isLocalDesktop } from "@/lib/platform"
 import {
   AI_PROVIDER_ALIYUN_BAILIAN,
   ALIYUN_BAILIAN_REGION_OPTIONS,
@@ -96,7 +96,7 @@ export function ConfigPluginView({
   const localeUnsupported =
     basicSettings.locale !== "system" &&
     !isHostLocaleSupported(basicSettings.locale)
-  const canManageLaunchAtStartup = isDesktop()
+  const canManageLaunchAtStartup = isLocalDesktop()
 
   const loadConfig = useCallback(async () => {
     setConfigLoading(true)

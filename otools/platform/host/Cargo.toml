@@ -4,16 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-base64 = "0.22"
-chrono = { version = "0.4", features = ["serde"] }
-csv = "1"
-dirs = "6"
 otools-core = { path = "../../core" }
 otools-platform-clipboard = { path = "../clipboard" }
+otools-platform-http-client = { path = "../http-client" }
 otools-platform-package-manager = { path = "../package-manager" }
+otools-platform-process = { path = "../process" }
+otools-platform-project = { path = "../project" }
 otools-platform-shell = { path = "../shell" }
+otools-platform-storage = { path = "../storage" }
 otools-platform-upload = { path = "../upload" }
-reqwest = { version = "0.12", features = ["json"] }
-serde = { version = "1", features = ["derive"] }
+otools-platform-webview-fs = { path = "../webview-fs" }
 serde_json = "1"
-walkdir = "2"
+otools-platform-ssh = { path = "../ssh" }

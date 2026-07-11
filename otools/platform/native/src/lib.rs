@@ -3,16 +3,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use base64::Engine as _;
 use libloading::Library;
 use otools_core::catalog;
-use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE, SET_COOKIE,
-};
+use otools_platform_native_contract::native_platform_lib_name as platform_lib_name;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -65,20 +62,6 @@ struct NativePluginResolvedConfig {
     source_path: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-struct DevPluginBindingRecord {
-    uuid: String,
-    directory_path: String,
-    plugin_manifest_path: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-struct DevBindingStateFile {
-    items: Vec<DevPluginBindingRecord>,
-}
-
 #[repr(C)]
 pub struct OtoolsNativeHostApiV1 {
     pub version: u32,
@@ -89,6 +72,15 @@ pub struct OtoolsNativeHostApiV1 {
 
 static NATIVE_PLUGIN_REGISTRY: OnceLock<Mutex<HashMap<String, NativePluginEntry>>> =
     OnceLock::new();
+static NATIVE_LISTEN_STATE: OnceLock<Mutex<HashMap<String, NativeListenEntry>>> = OnceLock::new();
+
+type NativeEventEmitter = Arc<dyn Fn(String, Value) + Send + Sync + 'static>;
+
+struct NativeListenEntry {
+    refs: u32,
+    stop: Option<mpsc::Sender<()>>,
+    task: Option<thread::JoinHandle<()>>,
+}
 
 static OTOOLS_NATIVE_HOST_API_V1: OtoolsNativeHostApiV1 = OtoolsNativeHostApiV1 {
     version: 2,
@@ -238,6 +230,76 @@ pub fn native_plugin_poll_events(uuid: String) -> Result<Vec<Value>, String> {
     })
 }
 
+pub fn native_plugin_listen_acquire(
+    uuid: String,
+    interval_ms: Option<u64>,
+    emit: impl Fn(String, Value) + Send + Sync + 'static,
+) -> Result<(), String> {
+    let normalized = normalize_plugin_id(&uuid);
+    if normalized.is_empty() {
+        return Err("插件 UUID 不能为空".to_string());
+    }
+
+    let interval_ms = normalize_poll_interval_ms(interval_ms);
+    let mut state = native_listen_state()
+        .lock()
+        .map_err(|_| "Native plugin listen state 已锁死".to_string())?;
+    let emit = Arc::new(emit);
+    match state.entry(normalized.clone()) {
+        std::collections::hash_map::Entry::Occupied(mut occupied) => {
+            let entry = occupied.get_mut();
+            if entry.refs == 0 {
+                let (stop, stop_rx) = mpsc::channel();
+                let task = spawn_native_event_poller(normalized, interval_ms, stop_rx, emit)?;
+                entry.refs = 1;
+                entry.stop = Some(stop);
+                entry.task = Some(task);
+            } else {
+                entry.refs = entry.refs.saturating_add(1);
+            }
+        }
+        std::collections::hash_map::Entry::Vacant(vacant) => {
+            let (stop, stop_rx) = mpsc::channel();
+            let task = spawn_native_event_poller(normalized, interval_ms, stop_rx, emit)?;
+            vacant.insert(NativeListenEntry {
+                refs: 1,
+                stop: Some(stop),
+                task: Some(task),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+pub fn native_plugin_listen_release(uuid: String) -> Result<(), String> {
+    let normalized = normalize_plugin_id(&uuid);
+    if normalized.is_empty() {
+        return Err("插件 UUID 不能为空".to_string());
+    }
+
+    let mut state = native_listen_state()
+        .lock()
+        .map_err(|_| "Native plugin listen state 已锁死".to_string())?;
+    let Some(entry) = state.get_mut(&normalized) else {
+        return Ok(());
+    };
+    if entry.refs == 0 {
+        return Ok(());
+    }
+
+    entry.refs -= 1;
+    if entry.refs == 0 {
+        if let Some(stop) = entry.stop.take() {
+            let _ = stop.send(());
+        }
+        let _ = entry.task.take();
+        state.remove(&normalized);
+    }
+
+    Ok(())
+}
+
 pub fn normalize_plugin_id(value: &str) -> String {
     let mut normalized = String::with_capacity(value.len());
     for ch in value.trim().chars() {
@@ -252,6 +314,64 @@ pub fn normalize_plugin_id(value: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<&str>>()
         .join("-")
+}
+
+fn native_listen_state() -> &'static Mutex<HashMap<String, NativeListenEntry>> {
+    NATIVE_LISTEN_STATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn normalize_poll_interval_ms(raw: Option<u64>) -> u64 {
+    raw.unwrap_or(200).clamp(50, 10_000)
+}
+
+fn native_event_label(uuid: &str) -> String {
+    format!("otools-native:{uuid}")
+}
+
+fn spawn_native_event_poller(
+    plugin_uuid: String,
+    interval_ms: u64,
+    stop: mpsc::Receiver<()>,
+    emit: NativeEventEmitter,
+) -> Result<thread::JoinHandle<()>, String> {
+    thread::Builder::new()
+        .name(format!("otools-native-listen-{plugin_uuid}"))
+        .spawn(move || {
+            let delay = Duration::from_millis(interval_ms);
+            loop {
+                let Ok(events) = native_plugin_poll_events(plugin_uuid.clone()) else {
+                    match stop.recv_timeout(delay) {
+                        Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    }
+                };
+                if !events.is_empty() {
+                    let label = native_event_label(&plugin_uuid);
+                    for event in events {
+                        let topic = event.get("topic").cloned().unwrap_or(Value::Null);
+                        if topic.as_str().map(str::trim).unwrap_or_default().is_empty() {
+                            continue;
+                        }
+                        let payload = event.get("payload").cloned().unwrap_or(Value::Null);
+                        emit(
+                            label.clone(),
+                            json!({
+                                "topic": topic,
+                                "payload": payload,
+                            }),
+                        );
+                    }
+                }
+
+                match stop.recv_timeout(delay) {
+                    Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        continue;
+                    }
+                }
+            }
+        })
+        .map_err(|error| format!("启动 native 插件事件监听失败: {error}"))
 }
 
 fn parse_poll_events(response: Value, plugin_uuid: &str) -> Vec<Value> {
@@ -289,132 +409,6 @@ fn parse_poll_events(response: Value, plugin_uuid: &str) -> Vec<Value> {
 
 fn native_plugin_registry() -> &'static Mutex<HashMap<String, NativePluginEntry>> {
     NATIVE_PLUGIN_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn platform_lib_name() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        "macOS.dylib"
-    }
-    #[cfg(target_os = "windows")]
-    {
-        "Windows.dll"
-    }
-    #[cfg(target_os = "linux")]
-    {
-        "Linux.so"
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-    {
-        "native.so"
-    }
-}
-
-fn plugin_root_bases() -> Vec<PathBuf> {
-    let mut roots = catalog::external_plugin_dirs();
-    roots.push(catalog::installed_plugins_dir());
-    roots.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("plugins"),
-    );
-    roots
-}
-
-fn resolve_dev_binding_root(uuid: &str) -> Option<PathBuf> {
-    let path = catalog::dev_local_root_dir().join("state.json");
-    let value = catalog::read_json_file::<Value>(&path).ok()?;
-    let bindings = match value {
-        Value::Object(_) => serde_json::from_value::<DevBindingStateFile>(value)
-            .ok()
-            .map(|state| state.items)
-            .unwrap_or_default(),
-        Value::Array(items) => items
-            .into_iter()
-            .filter_map(|item| serde_json::from_value::<DevPluginBindingRecord>(item).ok())
-            .collect::<Vec<_>>(),
-        _ => Vec::new(),
-    };
-
-    let target = normalize_plugin_id(uuid);
-    let binding = bindings.into_iter().find(|item| normalize_plugin_id(&item.uuid) == target)?;
-    let path = if binding.plugin_manifest_path.trim().is_empty() {
-        PathBuf::from(binding.directory_path.trim())
-    } else {
-        PathBuf::from(binding.plugin_manifest_path.trim())
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from(binding.directory_path.trim()))
-    };
-    catalog::resolve_plugin_adapter_root(&path)
-        .or_else(|| catalog::resolve_plugin_adapter_root(Path::new(binding.directory_path.trim())))
-}
-
-fn resolve_plugin_root_candidates(uuid: &str) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let normalized = normalize_plugin_id(uuid);
-
-    if let Some(root) = resolve_dev_binding_root(uuid) {
-        out.push(root);
-    }
-
-    for base in plugin_root_bases() {
-        for key in [uuid.trim(), normalized.as_str()] {
-            if key.is_empty() {
-                continue;
-            }
-            let candidate = base.join(key);
-            if let Some(root) = catalog::resolve_plugin_adapter_root(&candidate) {
-                if !out.iter().any(|item| item == &root) {
-                    out.push(root);
-                }
-            }
-        }
-
-        let Ok(entries) = fs::read_dir(&base) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let candidate = entry.path();
-            let Some(root) = catalog::resolve_plugin_adapter_root(&candidate) else {
-                continue;
-            };
-            let Some(manifest_path) = catalog::resolve_plugin_manifest_path(&root) else {
-                continue;
-            };
-            let Ok(value) = catalog::read_json_file::<Value>(&manifest_path) else {
-                continue;
-            };
-            let Value::Object(map) = value else {
-                continue;
-            };
-            let manifest_uuid = map
-                .get("uuid")
-                .and_then(Value::as_str)
-                .map(normalize_plugin_id)
-                .unwrap_or_default();
-            let manifest_packid = map
-                .get("packid")
-                .and_then(Value::as_str)
-                .map(normalize_plugin_id)
-                .unwrap_or_default();
-            if manifest_uuid == normalized || manifest_packid == normalized {
-                if !out.iter().any(|item| item == &root) {
-                    out.push(root);
-                }
-            }
-        }
-    }
-
-    out
-}
-
-fn resolve_primary_manifest_path(uuid: &str) -> Option<PathBuf> {
-    resolve_plugin_root_candidates(uuid)
-        .into_iter()
-        .filter_map(|root| catalog::resolve_plugin_manifest_path(&root))
-        .find(|path| path.exists())
 }
 
 fn native_cache_root_dir() -> PathBuf {
@@ -469,7 +463,7 @@ fn resolve_native_lib_path(
 }
 
 fn resolve_native_plugin_config(uuid: &str) -> Result<NativePluginResolvedConfig, String> {
-    let candidates = resolve_plugin_root_candidates(uuid);
+    let candidates = catalog::resolve_plugin_root_candidates(uuid);
     let mut fallback_root: Option<PathBuf> = None;
     let mut last_error: Option<String> = None;
 
@@ -577,7 +571,7 @@ fn resolve_native_plugin_config_cached(
         .get(uuid)
         .and_then(|entry| entry.config.manifest_path.clone())
         .filter(|path| path.exists())
-        .or_else(|| resolve_primary_manifest_path(uuid));
+        .or_else(|| catalog::resolve_primary_plugin_manifest_path(uuid));
     let manifest_modified = manifest_path
         .as_ref()
         .and_then(|path| read_manifest_modified(path));
@@ -750,454 +744,8 @@ fn encode_host_response(value: Value, output_len: *mut usize) -> *mut u8 {
 }
 
 fn dispatch_host_capability(capability: &str, request: Value) -> Result<Value, String> {
-    match capability {
-        "http.send" => host_http_send(request),
-        "http.normalize_request" => Ok(normalize_host_http_request(request)),
-        "http.writeBase64File" | "http.write_base64_file" => {
-            let path = request
-                .get("filePath")
-                .or_else(|| request.get("file_path"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| "filePath is required".to_string())?;
-            let data_base64 = request
-                .get("dataBase64")
-                .or_else(|| request.get("data_base64"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let bytes = BASE64_STANDARD
-                .decode(data_base64.trim())
-                .map_err(|error| format!("Invalid base64 file payload: {error}"))?;
-            let target = PathBuf::from(path);
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|error| format!("create dir failed {}: {error}", parent.display()))?;
-            }
-            fs::write(&target, bytes)
-                .map_err(|error| format!("write file failed {}: {error}", target.display()))?;
-            Ok(Value::Null)
-        }
-        "plugin_state.read" => {
-            let plugin = request_plugin_id(&request)?;
-            let scheme = request
-                .get("scheme")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            Ok(
-                otools_plugin_state::get_otools_plugin_localstate_with_scheme(plugin, scheme)
-                    .map_err(|error| error.to_string())?
-                    .unwrap_or(Value::Null),
-            )
-        }
-        "plugin_state.save_local" => {
-            let plugin = request_plugin_id(&request)?;
-            let scheme = request
-                .get("scheme")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            let state = request
-                .get("state")
-                .cloned()
-                .ok_or_else(|| "state is required".to_string())?;
-            otools_plugin_state::save_otools_plugin_localstate_with_scheme(plugin, scheme, state)
-                .map_err(|error| error.to_string())?;
-            Ok(Value::Null)
-        }
-        other => Err(format!("Unsupported host capability: {other}")),
-    }
-}
-
-fn normalize_host_http_request(request: Value) -> Value {
-    let mut object = match request {
-        Value::Object(object) => object,
-        _ => serde_json::Map::new(),
-    };
-
-    let method = object
-        .get("method")
-        .and_then(Value::as_str)
-        .unwrap_or("GET")
-        .trim()
-        .to_ascii_uppercase();
-    object.insert(
-        "method".to_string(),
-        Value::String(if method.is_empty() {
-            "GET".to_string()
-        } else {
-            method
-        }),
-    );
-
-    let body_type = object
-        .get("body_type")
-        .or_else(|| object.get("bodyType"))
-        .and_then(Value::as_str)
-        .unwrap_or("none")
-        .trim()
-        .to_ascii_lowercase();
-    let body_type = match body_type.as_str() {
-        "json" | "text" | "xml" | "form" | "binary" => body_type,
-        _ => "none".to_string(),
-    };
-    object.insert("body_type".to_string(), Value::String(body_type.clone()));
-    object.insert("bodyType".to_string(), Value::String(body_type));
-
-    let timeout_secs = object
-        .get("timeout_secs")
-        .or_else(|| object.get("timeoutSecs"))
-        .and_then(Value::as_u64)
-        .filter(|value| *value > 0)
-        .unwrap_or(30);
-    object.insert(
-        "timeout_secs".to_string(),
-        Value::Number(timeout_secs.into()),
-    );
-    object.insert(
-        "timeoutSecs".to_string(),
-        Value::Number(timeout_secs.into()),
-    );
-
-    for key in ["headers", "cookies", "params"] {
-        if let Some(value) = object.get(key).cloned() {
-            object.insert(key.to_string(), normalize_http_key_value_entries(value));
-        }
-    }
-
-    if let Some(body) = object.get("body").cloned() {
-        let normalized = match body {
-            Value::Null => Value::String(String::new()),
-            Value::String(_) => body,
-            other => Value::String(
-                serde_json::to_string(&other).unwrap_or_else(|_| other.to_string()),
-            ),
-        };
-        object.insert("body".to_string(), normalized);
-    }
-
-    Value::Object(object)
-}
-
-fn normalize_http_key_value_entries(value: Value) -> Value {
-    match value {
-        Value::Array(items) => Value::Array(items),
-        Value::Object(map) => Value::Array(
-            map.into_iter()
-                .map(|(key, value)| {
-                    json!({
-                        "key": key,
-                        "value": value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()),
-                        "enabled": true,
-                    })
-                })
-                .collect(),
-        ),
-        _ => Value::Array(Vec::new()),
-    }
-}
-
-fn request_plugin_id(request: &Value) -> Result<String, String> {
-    request
-        .get("plugin")
-        .or_else(|| request.get("pluginUuid"))
-        .or_else(|| request.get("plugin_uuid"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| "plugin is required".to_string())
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-struct HostHttpKeyValue {
-    key: String,
-    value: String,
-    enabled: bool,
-}
-
-impl Default for HostHttpKeyValue {
-    fn default() -> Self {
-        Self {
-            key: String::new(),
-            value: String::new(),
-            enabled: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-struct HostHttpRequest {
-    id: String,
-    name: String,
-    method: String,
-    url: String,
-    headers: Vec<HostHttpKeyValue>,
-    cookies: Vec<HostHttpKeyValue>,
-    params: Vec<HostHttpKeyValue>,
-    body_type: String,
-    body: String,
-    timeout_secs: u64,
-    follow_redirects: bool,
-}
-
-impl Default for HostHttpRequest {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            name: String::new(),
-            method: "GET".to_string(),
-            url: String::new(),
-            headers: Vec::new(),
-            cookies: Vec::new(),
-            params: Vec::new(),
-            body_type: "none".to_string(),
-            body: String::new(),
-            timeout_secs: 30,
-            follow_redirects: true,
-        }
-    }
-}
-
-fn host_http_send(request: Value) -> Result<Value, String> {
-    let mut request: HostHttpRequest =
-        serde_json::from_value(normalize_host_http_request(request)).map_err(|error| {
-            format!("Invalid OTools HTTP request payload: {error}")
-        })?;
-
-    if request.body_type.is_empty() {
-        request.body_type = "none".to_string();
-    }
-    if request.timeout_secs == 0 {
-        request.timeout_secs = 30;
-    }
-    if request.method.trim().is_empty() {
-        request.method = "GET".to_string();
-    }
-
-    let method = reqwest::Method::from_bytes(request.method.as_bytes())
-        .map_err(|error| format!("Invalid HTTP method: {error}"))?;
-    let mut url = parse_host_http_url(&request.url)?;
-    {
-        let mut query_pairs = url.query_pairs_mut();
-        for item in &request.params {
-            if !item.enabled || item.key.trim().is_empty() {
-                continue;
-            }
-            query_pairs.append_pair(item.key.trim(), item.value.as_str());
-        }
-    }
-
-    let redirect_policy = if request.follow_redirects {
-        reqwest::redirect::Policy::limited(10)
-    } else {
-        reqwest::redirect::Policy::none()
-    };
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(request.timeout_secs.max(1)))
-        .redirect(redirect_policy)
-        .build()
-        .map_err(|error| format!("Initialize OTools HTTP client failed: {error}"))?;
-    let mut builder = client.request(method, url);
-
-    for header in &request.headers {
-        if !header.enabled || header.key.trim().is_empty() {
-            continue;
-        }
-        let header_name = HeaderName::from_bytes(header.key.trim().as_bytes())
-            .map_err(|error| format!("Invalid HTTP header '{}': {error}", header.key))?;
-        let header_value = HeaderValue::from_str(header.value.as_str())
-            .map_err(|error| format!("Invalid HTTP header value '{}': {error}", header.key))?;
-        builder = builder.header(header_name, header_value);
-    }
-
-    let cookie_header = build_cookie_header(&request.cookies);
-    if !cookie_header.is_empty() {
-        builder = builder.header(COOKIE, cookie_header);
-    }
-
-    if request.body_type != "none" && !request.body.is_empty() {
-        if !has_content_type(&request.headers) {
-            builder = match request.body_type.as_str() {
-                "json" => builder.header(CONTENT_TYPE, "application/json"),
-                "xml" => builder.header(CONTENT_TYPE, "application/xml"),
-                "form" => builder.header(CONTENT_TYPE, "application/x-www-form-urlencoded"),
-                "text" => builder.header(CONTENT_TYPE, "text/plain; charset=utf-8"),
-                "binary" => builder.header(CONTENT_TYPE, "application/octet-stream"),
-                _ => builder,
-            };
-        }
-
-        if request.body_type == "binary" {
-            let binary = BASE64_STANDARD
-                .decode(request.body.trim())
-                .map_err(|error| format!("Binary body must be base64: {error}"))?;
-            builder = builder.body(binary);
-        } else {
-            builder = builder.body(request.body.clone());
-        }
-    }
-
-    let started_at = Instant::now();
-    let response = builder
-        .send()
-        .map_err(|error| format!("OTools HTTP request failed: {error}"))?;
-    let elapsed_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
-    let status = response.status();
-    let final_url = response.url().to_string();
-    let headers = response.headers().clone();
-    let bytes = response
-        .bytes()
-        .map_err(|error| format!("Failed to read OTools HTTP response: {error}"))?;
-
-    let response_headers = headers
-        .iter()
-        .map(|(name, value)| {
-            json!({
-                "key": name.to_string(),
-                "value": value.to_str().unwrap_or("").to_string(),
-            })
-        })
-        .collect::<Vec<_>>();
-    let response_cookies = headers
-        .get_all(SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok().map(|item| item.to_string()))
-        .collect::<Vec<_>>();
-    let content_type = headers
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let is_image = content_type.to_ascii_lowercase().starts_with("image/");
-    let body_base64 = BASE64_STANDARD.encode(&bytes);
-    let body_text = if is_image {
-        Value::Null
-    } else {
-        Value::String(String::from_utf8_lossy(&bytes).to_string())
-    };
-    let file_name = guess_response_file_name(&headers, &final_url, &content_type);
-
-    Ok(json!({
-        "status": status.as_u16(),
-        "status_text": status.canonical_reason().unwrap_or("").to_string(),
-        "headers": response_headers,
-        "cookies": response_cookies,
-        "elapsed_ms": elapsed_ms,
-        "content_type": content_type,
-        "size": bytes.len(),
-        "body_text": body_text,
-        "body_base64": body_base64,
-        "is_image": is_image,
-        "file_name": file_name,
-        "final_url": final_url,
-        "bodyBase64": BASE64_STANDARD.encode(&bytes),
-        "body": String::from_utf8_lossy(&bytes).to_string(),
-    }))
-}
-
-fn parse_host_http_url(url: &str) -> Result<reqwest::Url, String> {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return Err("url is required".to_string());
-    }
-    if let Ok(parsed) = reqwest::Url::parse(trimmed) {
-        return Ok(parsed);
-    }
-    reqwest::Url::parse(&format!("http://{trimmed}"))
-        .map_err(|error| format!("Invalid OTools HTTP url: {error}"))
-}
-
-fn has_content_type(headers: &[HostHttpKeyValue]) -> bool {
-    headers
-        .iter()
-        .any(|item| item.enabled && item.key.trim().eq_ignore_ascii_case("content-type"))
-}
-
-fn build_cookie_header(cookies: &[HostHttpKeyValue]) -> String {
-    cookies
-        .iter()
-        .filter(|item| item.enabled && !item.key.trim().is_empty())
-        .map(|item| format!("{}={}", item.key.trim(), item.value))
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-fn parse_content_disposition_filename(content_disposition: &str) -> Option<String> {
-    for segment in content_disposition.split(';').map(str::trim) {
-        if let Some(value) = segment.strip_prefix("filename=") {
-            let file_name = value.trim_matches('"').trim();
-            if !file_name.is_empty() {
-                return Some(file_name.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn sanitize_response_file_name(file_name: &str) -> String {
-    let sanitized = file_name
-        .chars()
-        .map(|ch| match ch {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => ch,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string();
-    if sanitized.is_empty() {
-        "response.bin".to_string()
-    } else {
-        sanitized
-    }
-}
-
-fn guess_response_file_name(headers: &HeaderMap, final_url: &str, content_type: &str) -> String {
-    if let Some(value) = headers
-        .get(CONTENT_DISPOSITION)
-        .and_then(|item| item.to_str().ok())
-        .and_then(parse_content_disposition_filename)
-    {
-        return sanitize_response_file_name(&value);
-    }
-
-    if let Ok(url) = reqwest::Url::parse(final_url) {
-        if let Some(segment) = url
-            .path_segments()
-            .and_then(|segments| segments.last())
-            .filter(|segment| !segment.trim().is_empty())
-        {
-            return sanitize_response_file_name(segment);
-        }
-    }
-
-    let extension = if content_type.starts_with("image/") {
-        content_type
-            .split('/')
-            .nth(1)
-            .and_then(|value| value.split(';').next())
-            .unwrap_or("png")
-            .trim()
-            .to_string()
-    } else if content_type.contains("json") {
-        "json".to_string()
-    } else if content_type.contains("xml") {
-        "xml".to_string()
-    } else if content_type.contains("text") {
-        "txt".to_string()
-    } else {
-        "bin".to_string()
-    };
-
-    format!(
-        "response_{}.{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|value| value.as_millis())
-            .unwrap_or(0),
-        extension
-    )
+    otools_platform_host_dispatch::dispatch_host_capability_blocking(capability, request)
+        .map_err(otools_platform_host_dispatch::host_error_to_string)
 }
 
 fn catch_native_panic<T, F>(context: &str, action: F) -> Result<T, String>
@@ -1220,5 +768,61 @@ fn format_panic_payload(payload: Box<dyn Any + Send>) -> String {
             Ok(message) => (*message).to_string(),
             Err(_) => "unknown panic".to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_poll_interval_ms_uses_compatible_bounds() {
+        assert_eq!(normalize_poll_interval_ms(None), 200);
+        assert_eq!(normalize_poll_interval_ms(Some(1)), 50);
+        assert_eq!(normalize_poll_interval_ms(Some(500)), 500);
+        assert_eq!(normalize_poll_interval_ms(Some(60_000)), 10_000);
+    }
+
+    #[test]
+    fn parse_poll_events_accepts_data_events_shape() {
+        let events = parse_poll_events(
+            json!({
+                "data": {
+                    "events": [
+                        { "topic": "ready", "payload": { "ok": true }, "seq": 7 },
+                        { "event": "changed", "payload": "value", "timestamp": 123 },
+                        { "topic": " " }
+                    ]
+                }
+            }),
+            "plugin-one",
+        );
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["pluginUuid"], "plugin-one");
+        assert_eq!(events[0]["topic"], "ready");
+        assert_eq!(events[0]["payload"], json!({ "ok": true }));
+        assert_eq!(events[0]["seq"], 7);
+        assert_eq!(events[1]["topic"], "changed");
+        assert_eq!(events[1]["payload"], "value");
+        assert_eq!(events[1]["timestamp"], 123);
+    }
+
+    #[test]
+    fn parse_poll_events_accepts_data_array_shape() {
+        let events = parse_poll_events(
+            json!({
+                "data": [
+                    { "topic": "message", "payload": 1 },
+                    { "payload": "missing-topic" }
+                ]
+            }),
+            "plugin-two",
+        );
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["pluginUuid"], "plugin-two");
+        assert_eq!(events[0]["topic"], "message");
+        assert_eq!(events[0]["payload"], 1);
     }
 }

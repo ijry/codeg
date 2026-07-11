@@ -1,0 +1,11 @@
+[package]
+name = "otools-platform-host-info"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dirs = "6"
+otools-core = { path = "../../core" }
+otools-plugin-registry = { path = "../../plugins/registry" }
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }

@@ -1,6 +1,5 @@
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 
 pub fn otools_shell_open_path(path: String) -> Result<(), String> {
     let target = require_non_empty(&path, "路径不能为空")?;
@@ -93,14 +92,8 @@ fn require_non_empty<'a>(value: &'a str, message: &str) -> Result<&'a str, Strin
 }
 
 fn spawn_background(program: &str, args: &[&str]) -> Result<(), String> {
-    let mut command = Command::new(program);
+    let mut command = otools_platform_process::new_background_command(program);
     command.args(args);
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
 
     command
         .spawn()

@@ -1,10 +1,9 @@
 use std::collections::HashSet;
-use std::fs;
-use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use otools_core::catalog::{self, ToolPlugin, ToolPluginAutostartTask, ToolPluginShutdownHook};
+use otools_core::catalog::{ToolPlugin, ToolPluginAutostartTask, ToolPluginShutdownHook};
+use otools_plugin_dispatcher::host_error_to_string;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -183,11 +182,18 @@ pub async fn run_otools_shutdown_hooks() -> OtoolsLifecycleRunReport {
         }
 
         let started_at = Instant::now();
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(hook.timeout_ms),
-            invoke_plugin_dispatch(&hook.plugin_id, &hook.action_id, json!({})),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(hook.timeout_ms), async {
+                if let Ok(runner) =
+                    otools_platform_lifecycle_registry::resolve_shutdown_action_runner(
+                        &hook.action_id,
+                    )
+                {
+                    return runner().await.map(Value::String);
+                }
+                invoke_plugin_dispatch(&hook.plugin_id, &hook.action_id, json!({})).await
+            })
+            .await;
 
         match result {
             Ok(Ok(value)) => items.push(OtoolsLifecycleRunItem {
@@ -293,36 +299,7 @@ async fn invoke_plugin_dispatch(
     action: &str,
     payload: Value,
 ) -> Result<Value, String> {
-    if otools_plugin_dev::supports_plugin(plugin_id) {
-        return otools_plugin_dev::dispatch_command(action, payload)
-            .await
-            .map_err(host_error_to_string);
-    }
-    if otools_plugin_park::supports_plugin(plugin_id) {
-        return otools_plugin_park::dispatch_command(action, payload)
-            .await
-            .map_err(host_error_to_string);
-    }
-
-    let plugin_id = plugin_id.to_string();
-    let action = action.to_string();
-    tokio::task::spawn_blocking(move || {
-        otools_platform_native::native_plugin_invoke(plugin_id, action, payload)
-    })
-    .await
-    .map_err(|error| format!("lifecycle dispatch task failed: {error}"))?
-}
-
-fn host_error_to_string(error: otools_core::HostError) -> String {
-    let otools_core::HostError {
-        message, detail, ..
-    } = error;
-    match detail {
-        Some(detail) if !detail.trim().is_empty() && detail != message => {
-            format!("{message}: {detail}")
-        }
-        _ => message,
-    }
+    otools_plugin_dispatcher::invoke_lifecycle_command(plugin_id, action, payload).await
 }
 
 fn extract_dispatch_message(value: &Value) -> String {
@@ -404,73 +381,11 @@ fn build_catalog_error_report(phase: &str, error: String) -> OtoolsLifecycleRunR
 }
 
 fn load_lifecycle_plugins() -> Result<Vec<ToolPlugin>, String> {
-    let mut plugins = catalog::load_merged_plugins().map_err(host_error_to_string)?;
-    let mut seen = plugins
-        .iter()
-        .map(plugin_identity)
-        .collect::<HashSet<_>>();
-
-    for root in plugin_roots() {
-        if !root.exists() {
-            continue;
-        }
-        let entries = fs::read_dir(&root)
-            .map_err(|error| format!("read plugin root failed {}: {error}", root.display()))?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Some(plugin) = read_manifest_plugin(&path) else {
-                continue;
-            };
-            let identity = plugin_identity(&plugin);
-            if seen.insert(identity) {
-                plugins.push(plugin);
-            }
-        }
-    }
-
-    plugins.sort_by(|left, right| left.display_name.cmp(&right.display_name));
-    Ok(plugins)
+    otools_plugin_registry::list_lifecycle_plugins().map_err(host_error_to_string)
 }
 
-fn read_manifest_plugin(root: &PathBuf) -> Option<ToolPlugin> {
-    let manifest_path = catalog::resolve_plugin_manifest_path(root.as_path())?;
-    let value = catalog::read_json_file::<Value>(&manifest_path).ok()?;
-    let mut plugin = serde_json::from_value::<ToolPlugin>(value).ok()?;
-    if plugin.uuid.trim().is_empty() {
-        plugin.uuid = plugin.packid.clone();
-    }
-    catalog::normalize_plugin(plugin)
-}
-
-fn plugin_roots() -> Vec<PathBuf> {
-    let mut roots = catalog::external_plugin_dirs();
-    roots.push(catalog::installed_plugins_dir());
-    roots.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("plugins"),
-    );
-    roots
-}
-
-fn plugin_identity(plugin: &ToolPlugin) -> String {
-    let id = if plugin.uuid.trim().is_empty() {
-        plugin.packid.trim()
-    } else {
-        plugin.uuid.trim()
-    };
-    id.to_ascii_lowercase()
-}
-
-fn plugin_dispatch_id(plugin: &ToolPlugin) -> String {
-    if plugin.uuid.trim().is_empty() {
-        plugin.packid.trim().to_string()
-    } else {
-        plugin.uuid.trim().to_string()
-    }
+fn plugin_dispatch_id(plugin: &otools_core::catalog::ToolPlugin) -> String {
+    otools_plugin_registry::tool_plugin_dispatch_id(plugin)
 }
 
 fn hook_entry_id(plugin_id: &str, hook: &ToolPluginShutdownHook, index: usize) -> String {
@@ -483,14 +398,5 @@ fn hook_entry_id(plugin_id: &str, hook: &ToolPluginShutdownHook, index: usize) -
 }
 
 fn validate_dispatch_token(value: &str, label: &str) -> Result<String, String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty()
-        || trimmed.len() > 128
-        || !trimmed
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
-    {
-        return Err(format!("Invalid OTools {label}"));
-    }
-    Ok(trimmed.to_string())
+    otools_plugin_dispatcher::validate_dispatch_token(value, label).map_err(host_error_to_string)
 }

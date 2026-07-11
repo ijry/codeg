@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, OnceLock};
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
@@ -14,8 +14,23 @@ use crate::web::event_bridge::{EventEmitter, WebEventBroadcaster};
 use crate::web::{find_static_dir_standalone, generate_random_token, WebServerState};
 
 static OTOOLS_RUNTIME: OnceLock<Arc<OtoolsPluginRuntime>> = OnceLock::new();
-static OTOOLS_RUNTIME_BLOCKING_GATE: Mutex<()> = Mutex::new(());
 static OTOOLS_TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+static OTOOLS_HOST_THREAD: OnceLock<Result<OtoolsHostThread, String>> = OnceLock::new();
+
+struct OtoolsHostThread {
+    sender: mpsc::Sender<OtoolsHostJob>,
+}
+
+enum OtoolsHostJob {
+    Invoke {
+        method: String,
+        payload: Value,
+        reply: mpsc::Sender<Result<Value, String>>,
+    },
+    PollEvents {
+        reply: mpsc::Sender<Result<Vec<Value>, String>>,
+    },
+}
 
 pub struct OtoolsPluginRuntime {
     state: Arc<AppState>,
@@ -244,30 +259,76 @@ impl Drop for OtoolsPluginRuntime {
 }
 
 pub fn invoke_blocking(method: &str, payload: Value) -> Result<Value, String> {
-    let _gate = OTOOLS_RUNTIME_BLOCKING_GATE
-        .lock()
-        .map_err(|_| "otools runtime lock poisoned".to_string())?;
-
-    let method = method.to_string();
-    catch_runtime_unwind("invoke", move || {
-        blocking_runtime().block_on(async {
-            let runtime = shared_runtime().await?;
-            runtime.invoke(&method, payload).await
+    let (reply, receiver) = mpsc::channel();
+    host_thread()?
+        .sender
+        .send(OtoolsHostJob::Invoke {
+            method: method.to_string(),
+            payload,
+            reply,
         })
-    })
+        .map_err(|_| "otools host thread is unavailable".to_string())?;
+    receiver
+        .recv()
+        .map_err(|_| "otools host thread stopped before invoke completed".to_string())?
 }
 
 pub fn poll_events_blocking() -> Result<Vec<Value>, String> {
-    let _gate = OTOOLS_RUNTIME_BLOCKING_GATE
-        .lock()
-        .map_err(|_| "otools runtime lock poisoned".to_string())?;
+    let (reply, receiver) = mpsc::channel();
+    host_thread()?
+        .sender
+        .send(OtoolsHostJob::PollEvents { reply })
+        .map_err(|_| "otools host thread is unavailable".to_string())?;
+    receiver
+        .recv()
+        .map_err(|_| "otools host thread stopped before poll_events completed".to_string())?
+}
 
-    catch_runtime_unwind("poll_events", || {
-        blocking_runtime().block_on(async {
-            let runtime = shared_runtime().await?;
-            runtime.poll_events().await
-        })
-    })
+fn host_thread() -> Result<&'static OtoolsHostThread, String> {
+    OTOOLS_HOST_THREAD
+        .get_or_init(OtoolsHostThread::spawn)
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+impl OtoolsHostThread {
+    fn spawn() -> Result<Self, String> {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("codeg-otools-host".to_string())
+            .spawn(move || run_otools_host_thread(receiver))
+            .map_err(|error| format!("failed to spawn otools host thread: {error}"))?;
+        Ok(Self { sender })
+    }
+}
+
+fn run_otools_host_thread(receiver: mpsc::Receiver<OtoolsHostJob>) {
+    while let Ok(job) = receiver.recv() {
+        match job {
+            OtoolsHostJob::Invoke {
+                method,
+                payload,
+                reply,
+            } => {
+                let result = catch_runtime_unwind("invoke", move || {
+                    blocking_runtime().block_on(async {
+                        let runtime = shared_runtime().await?;
+                        runtime.invoke(&method, payload).await
+                    })
+                });
+                let _ = reply.send(result);
+            }
+            OtoolsHostJob::PollEvents { reply } => {
+                let result = catch_runtime_unwind("poll_events", || {
+                    blocking_runtime().block_on(async {
+                        let runtime = shared_runtime().await?;
+                        runtime.poll_events().await
+                    })
+                });
+                let _ = reply.send(result);
+            }
+        }
+    }
 }
 
 fn blocking_runtime() -> &'static tokio::runtime::Runtime {

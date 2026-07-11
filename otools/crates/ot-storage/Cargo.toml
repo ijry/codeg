@@ -1,0 +1,10 @@
+[package]
+name = "ot-storage"
+version = "0.1.0"
+edition = "2021"
+description = "Compatibility shim for legacy OTools storage helpers"
+
+[dependencies]
+otools-core = { path = "../../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,0 +1,12 @@
+[package]
+name = "ot-tauri-shell"
+version = "0.1.0"
+edition = "2021"
+description = "Compatibility shim for legacy OTools Tauri shell window helpers"
+
+[dependencies]
+ot-run-mode = { path = "../ot-run-mode" }
+tauri = { version = "2.9.1", features = [] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.24"

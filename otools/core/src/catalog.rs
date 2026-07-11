@@ -15,6 +15,12 @@ fn default_enabled_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginAdapterLayout {
+    pub plugin_root: PathBuf,
+    pub manifest_path: PathBuf,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ToolPluginAutostartTask {
@@ -59,11 +65,20 @@ pub struct ToolPlugin {
     pub summary: String,
     pub screenshots: Vec<String>,
     pub version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "minOToolsVersion",
+        alias = "minOtoolsVersion",
+        alias = "min_otools_version",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub min_otools_version: Option<String>,
     pub icon: String,
     pub key: Vec<String>,
     pub entry: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preload: Option<String>,
+    pub has_ad: bool,
+    pub in_plugin_purchase: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dev_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -95,6 +110,9 @@ impl Default for ToolPlugin {
             icon: String::new(),
             key: Vec::new(),
             entry: String::new(),
+            preload: None,
+            has_ad: false,
+            in_plugin_purchase: false,
             dev_url: None,
             quick_dev: None,
             source: None,
@@ -113,6 +131,20 @@ impl Default for ToolPlugin {
 pub struct ToolPluginsFile {
     pub version: u64,
     pub plugins: Vec<ToolPlugin>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct DevPluginBindingRecord {
+    uuid: String,
+    directory_path: String,
+    plugin_manifest_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct DevBindingStateFile {
+    items: Vec<DevPluginBindingRecord>,
 }
 
 pub fn otools_root_dir() -> PathBuf {
@@ -270,6 +302,130 @@ fn builtin_plugin_roots() -> Vec<PathBuf> {
     roots
 }
 
+pub fn local_plugin_roots() -> Vec<PathBuf> {
+    let mut roots = external_plugin_dirs();
+    roots.push(installed_plugins_dir());
+    roots.extend(builtin_plugin_roots());
+    roots
+}
+
+pub fn resolve_plugin_root_candidates(plugin_id: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let normalized = normalize_plugin_lookup_id(plugin_id);
+    if normalized.is_empty() {
+        return roots;
+    }
+
+    if let Some(root) = resolve_dev_binding_root(plugin_id) {
+        push_unique_plugin_root(&mut roots, root);
+    }
+
+    for base in local_plugin_roots() {
+        for key in [plugin_id.trim(), normalized.as_str()] {
+            if key.is_empty() {
+                continue;
+            }
+            let candidate = base.join(key);
+            if let Some(root) = resolve_plugin_adapter_root(&candidate) {
+                push_unique_plugin_root(&mut roots, root);
+            }
+        }
+
+        let Ok(entries) = fs::read_dir(&base) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Some(root) = resolve_plugin_adapter_root(&entry.path()) else {
+                continue;
+            };
+            let Some(manifest_path) = resolve_plugin_manifest_path(&root) else {
+                continue;
+            };
+            let Ok(value) = read_json_file::<Value>(&manifest_path) else {
+                continue;
+            };
+            let Value::Object(map) = value else {
+                continue;
+            };
+            let manifest_uuid = map
+                .get("uuid")
+                .and_then(Value::as_str)
+                .map(normalize_plugin_lookup_id)
+                .unwrap_or_default();
+            let manifest_packid = map
+                .get("packid")
+                .and_then(Value::as_str)
+                .map(normalize_plugin_lookup_id)
+                .unwrap_or_default();
+            if manifest_uuid == normalized || manifest_packid == normalized {
+                push_unique_plugin_root(&mut roots, root);
+            }
+        }
+    }
+
+    roots
+}
+
+pub fn resolve_primary_plugin_manifest_path(plugin_id: &str) -> Option<PathBuf> {
+    resolve_plugin_root_candidates(plugin_id)
+        .into_iter()
+        .filter_map(|root| resolve_plugin_manifest_path(&root))
+        .find(|path| path.exists())
+}
+
+fn resolve_dev_binding_root(plugin_id: &str) -> Option<PathBuf> {
+    let path = dev_local_root_dir().join("state.json");
+    let value = read_json_file::<Value>(&path).ok()?;
+    let bindings = match value {
+        Value::Object(_) => serde_json::from_value::<DevBindingStateFile>(value)
+            .ok()
+            .map(|state| state.items)
+            .unwrap_or_default(),
+        Value::Array(items) => items
+            .into_iter()
+            .filter_map(|item| serde_json::from_value::<DevPluginBindingRecord>(item).ok())
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+
+    let target = normalize_plugin_lookup_id(plugin_id);
+    let binding = bindings
+        .into_iter()
+        .find(|item| normalize_plugin_lookup_id(&item.uuid) == target)?;
+    let path = if binding.plugin_manifest_path.trim().is_empty() {
+        PathBuf::from(binding.directory_path.trim())
+    } else {
+        PathBuf::from(binding.plugin_manifest_path.trim())
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(binding.directory_path.trim()))
+    };
+    resolve_plugin_adapter_root(&path)
+        .or_else(|| resolve_plugin_adapter_root(Path::new(binding.directory_path.trim())))
+}
+
+fn push_unique_plugin_root(roots: &mut Vec<PathBuf>, root: PathBuf) {
+    if !roots.iter().any(|item| item == &root) {
+        roots.push(root);
+    }
+}
+
+fn normalize_plugin_lookup_id(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+        } else if matches!(ch, '-' | '_' | '.') {
+            normalized.push('-');
+        }
+    }
+    normalized
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<&str>>()
+        .join("-")
+}
+
 pub fn is_dev_debug_plugin(plugin: &ToolPlugin) -> bool {
     plugin.source.as_deref().unwrap_or_default() == DEV_DEBUG_SOURCE
         || plugin.quick_dev.unwrap_or(false)
@@ -307,6 +463,104 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
+}
+
+fn resolve_installed_plugin_manifest_path(primary: &str, fallback: &str) -> Option<PathBuf> {
+    let mut seen = HashSet::<String>::new();
+    for id in [primary, fallback] {
+        let normalized = id.trim();
+        if normalized.is_empty() || !seen.insert(normalized.to_ascii_lowercase()) {
+            continue;
+        }
+        let root = installed_plugins_dir().join(normalized);
+        if let Some(manifest_path) = resolve_plugin_manifest_path(&root) {
+            return Some(manifest_path);
+        }
+    }
+    None
+}
+
+fn resolve_builtin_plugin_manifest_path(packid: &str) -> Option<PathBuf> {
+    let normalized = packid.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+    for root in builtin_plugin_roots() {
+        if let Some(manifest_path) = resolve_plugin_manifest_path(&root.join(normalized)) {
+            return Some(manifest_path);
+        }
+    }
+    None
+}
+
+fn refresh_plugin_metadata_from_manifest(plugin: &mut ToolPlugin) {
+    let is_builtin = plugin.builtin.unwrap_or(false);
+    let needs_autostart_or_hooks = plugin.autostart.is_none() || plugin.shutdown_hooks.is_none();
+    if is_builtin && !needs_autostart_or_hooks {
+        return;
+    }
+
+    let manifest_path = if is_builtin {
+        resolve_builtin_plugin_manifest_path(plugin.packid.as_str()).or_else(|| {
+            resolve_installed_plugin_manifest_path(plugin.uuid.as_str(), plugin.packid.as_str())
+        })
+    } else {
+        resolve_installed_plugin_manifest_path(plugin.uuid.as_str(), plugin.packid.as_str())
+    };
+    let Some(manifest_path) = manifest_path else {
+        return;
+    };
+
+    let Ok(value) = read_json_file::<Value>(&manifest_path) else {
+        return;
+    };
+    let Value::Object(map) = value else {
+        return;
+    };
+
+    if !is_builtin {
+        if plugin.display_name.is_empty() {
+            if let Some(display_name) = map
+                .get("displayName")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                plugin.display_name = display_name.to_string();
+            }
+        }
+
+        if plugin.display_name_cn.is_none() {
+            if let Some(display_name_cn) = map
+                .get("displayNameCN")
+                .or_else(|| map.get("displayNameZh"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                plugin.display_name_cn = Some(display_name_cn.to_string());
+            }
+        }
+    }
+
+    if plugin.autostart.is_none() {
+        if let Some(value) = map.get("autostart") {
+            if let Ok(autostart) = serde_json::from_value::<ToolPluginAutostart>(value.clone()) {
+                plugin.autostart = Some(autostart);
+            }
+        }
+    }
+
+    if plugin.shutdown_hooks.is_none() {
+        if let Some(value) = map.get("shutdownHooks") {
+            if let Ok(hooks) = serde_json::from_value::<Vec<ToolPluginShutdownHook>>(value.clone())
+            {
+                if !hooks.is_empty() {
+                    plugin.shutdown_hooks = Some(hooks);
+                }
+            }
+        }
+    }
 }
 
 fn normalize_plugin_id(value: &str) -> String {
@@ -347,6 +601,9 @@ pub fn normalize_plugin(mut plugin: ToolPlugin) -> Option<ToolPlugin> {
     plugin.packid = packid.to_string();
     plugin.display_name = plugin.display_name.trim().to_string();
     plugin.display_name_cn = normalize_optional_string(plugin.display_name_cn);
+    refresh_plugin_metadata_from_manifest(&mut plugin);
+    plugin.display_name = plugin.display_name.trim().to_string();
+    plugin.display_name_cn = normalize_optional_string(plugin.display_name_cn);
     if plugin.display_name.is_empty() && plugin.display_name_cn.is_none() {
         plugin.display_name = plugin.packid.clone();
     }
@@ -373,12 +630,50 @@ pub fn normalize_plugin(mut plugin: ToolPlugin) -> Option<ToolPlugin> {
         plugin.key.push(plugin.packid.clone());
     }
     plugin.entry = plugin.entry.trim().to_string();
+    if plugin.entry.is_empty() && has_local_plugin_index(&plugin.uuid, &plugin.packid) {
+        plugin.entry = "index.html".to_string();
+    }
+    plugin.preload = normalize_optional_string(plugin.preload);
     plugin.dev_url = normalize_optional_string(plugin.dev_url);
     plugin.quick_dev = plugin.quick_dev.filter(|value| *value);
     plugin.source = Some(resolve_plugin_source(&plugin));
     plugin.open_in_browser = plugin.open_in_browser.or(Some(false));
     plugin.permissions = normalize_string_vec(plugin.permissions);
+    plugin.shutdown_hooks = plugin.shutdown_hooks.map(|hooks| {
+        hooks
+            .into_iter()
+            .filter_map(|mut hook| {
+                let action_id = hook.action_id.trim();
+                if action_id.is_empty() {
+                    return None;
+                }
+                hook.action_id = action_id.to_string();
+                hook.hook_id = normalize_optional_string(hook.hook_id);
+                hook.description = normalize_optional_string(hook.description);
+                Some(hook)
+            })
+            .collect()
+    });
     Some(plugin)
+}
+
+fn has_local_plugin_index(primary: &str, fallback: &str) -> bool {
+    let mut seen = HashSet::<String>::new();
+    for id in [primary, fallback] {
+        let normalized = id.trim();
+        if normalized.is_empty() || !seen.insert(normalized.to_ascii_lowercase()) {
+            continue;
+        }
+        for root in local_plugin_roots() {
+            let candidate = root.join(normalized);
+            let plugin_root =
+                resolve_plugin_adapter_root(&candidate).unwrap_or_else(|| candidate.clone());
+            if plugin_root.join("index.html").is_file() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 pub fn normalize_plugins(plugins: Vec<ToolPlugin>) -> Vec<ToolPlugin> {
@@ -510,20 +805,32 @@ pub fn tool_plugin_to_info(plugin: ToolPlugin) -> OtoolsPluginInfo {
         } else {
             Some(plugin.summary)
         },
+        screenshots: plugin.screenshots,
         version: if plugin.version.trim().is_empty() {
             None
         } else {
             Some(plugin.version)
         },
+        min_otools_version: plugin.min_otools_version,
         icon: if plugin.icon.trim().is_empty() {
             None
         } else {
             Some(plugin.icon)
         },
+        key: plugin.key,
         entry: plugin.entry,
+        preload: plugin.preload,
+        has_ad: plugin.has_ad,
+        in_plugin_purchase: plugin.in_plugin_purchase,
+        dev_url: plugin.dev_url,
+        quick_dev: plugin.quick_dev,
         open_in_browser: plugin.open_in_browser.unwrap_or(false),
         native_enabled: false,
         permissions: plugin.permissions,
+        autostart: plugin.autostart,
+        shutdown_hooks: plugin.shutdown_hooks,
+        enabled: plugin.enabled,
+        builtin: plugin.builtin,
         source,
         asset_base_url,
     }
@@ -608,17 +915,79 @@ pub fn is_external_entry(entry: &str) -> bool {
 }
 
 pub fn resolve_plugin_manifest_path(root: &Path) -> Option<PathBuf> {
+    resolve_plugin_adapter_layout(root).map(|layout| layout.manifest_path)
+}
+
+pub fn resolve_plugin_adapter_root(root: &Path) -> Option<PathBuf> {
+    resolve_plugin_adapter_layout(root).map(|layout| layout.plugin_root)
+}
+
+pub fn resolve_plugin_adapter_layout(root: &Path) -> Option<PluginAdapterLayout> {
+    if !root.exists() {
+        return None;
+    }
     let direct = root.join("plugin.json");
     if direct.is_file() {
-        return Some(direct);
+        return Some(PluginAdapterLayout {
+            plugin_root: root.to_path_buf(),
+            manifest_path: direct,
+        });
     }
-    let adapter = root.join("otools").join("plugin.json");
-    if adapter.is_file() {
-        return Some(adapter);
+    let adapter_root = root.join("otools");
+    let adapter_manifest = adapter_root.join("plugin.json");
+    if adapter_manifest.is_file() {
+        return Some(PluginAdapterLayout {
+            plugin_root: adapter_root,
+            manifest_path: adapter_manifest,
+        });
     }
     None
 }
 
-pub fn resolve_plugin_adapter_root(root: &Path) -> Option<PathBuf> {
-    resolve_plugin_manifest_path(root).and_then(|manifest| manifest.parent().map(Path::to_path_buf))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("otools-core-{name}-{}-{nanos}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create temp test dir");
+        dir
+    }
+
+    fn write_file(root: &Path, relative: &str, content: &str) {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent dir");
+        }
+        fs::write(path, content).expect("write test file");
+    }
+
+    #[test]
+    fn resolves_flat_plugin_layout() {
+        let root = temp_test_dir("flat-layout");
+        write_file(&root, "plugin.json", "{}");
+
+        let layout = resolve_plugin_adapter_layout(&root).expect("flat layout");
+
+        assert_eq!(layout.plugin_root, root);
+        assert_eq!(layout.manifest_path, layout.plugin_root.join("plugin.json"));
+        let _ = fs::remove_dir_all(layout.plugin_root);
+    }
+
+    #[test]
+    fn resolves_nested_otools_plugin_layout() {
+        let root = temp_test_dir("nested-layout");
+        write_file(&root, "otools/plugin.json", "{}");
+
+        let layout = resolve_plugin_adapter_layout(&root).expect("nested layout");
+
+        assert_eq!(layout.plugin_root, root.join("otools"));
+        assert_eq!(layout.manifest_path, root.join("otools/plugin.json"));
+        let _ = fs::remove_dir_all(root);
+    }
 }

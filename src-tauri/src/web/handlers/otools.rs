@@ -1,27 +1,38 @@
 use axum::{
     body::Body,
-    extract::{Path, Query, RawPathParams},
+    extract::{Extension, Path, Query, RawPathParams},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::Response,
     Json,
 };
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::io::SeekFrom;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
+use crate::app_state::AppState;
 use crate::app_error::AppCommandError;
 use crate::commands::otools::{
     self, DevBindDirectoryInput, DevPluginInput, DevPluginUpdateInput, DevPublishVersionInput,
     OtoolsNativeInvokeRequest, OtoolsPluginCommandInvokeRequest, ParkInstallInput,
     ParkUninstallInput, WebviewRenameEntryRequest, WebviewWriteFileRequest,
 };
+use crate::web::do_get_web_server_status;
+#[cfg(feature = "tauri-runtime")]
+use tauri::Manager;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenOtoolsWindowParams {
     pub source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteUiParams {
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,12 +50,14 @@ struct OtoolsHostFileByteRange {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginParams {
+    #[serde(alias = "plugin_uuid")]
     pub plugin_uuid: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginStateGetParams {
+    #[serde(alias = "plugin_uuid")]
     pub plugin_uuid: String,
     pub scheme: Option<String>,
 }
@@ -52,6 +65,7 @@ pub struct PluginStateGetParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginStateSetParams {
+    #[serde(alias = "plugin_uuid")]
     pub plugin_uuid: String,
     pub scheme: Option<String>,
     pub state: Value,
@@ -103,6 +117,7 @@ pub struct AiGenerateTextParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawTextParams {
+    #[serde(alias = "raw_text")]
     pub raw_text: String,
 }
 
@@ -134,6 +149,7 @@ pub struct UrlParams {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectEditorOpenParams {
     pub path: String,
+    #[serde(alias = "editor_id")]
     pub editor_id: String,
 }
 
@@ -146,19 +162,23 @@ pub struct ProjectRunnerOpenInTerminalParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetParams {
+    #[serde(alias = "plugin_uuid")]
     pub plugin_uuid: String,
+    #[serde(alias = "asset_path")]
     pub asset_path: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileContentReadParams {
+    #[serde(alias = "file_path")]
     pub file_path: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileContentWriteParams {
+    #[serde(alias = "file_path")]
     pub file_path: String,
     pub content: String,
 }
@@ -226,6 +246,7 @@ pub struct StorageCleanItemsParams {
 #[serde(rename_all = "camelCase")]
 pub struct PackageStatusParams {
     pub manager: Option<String>,
+    #[serde(alias = "package_name")]
     pub package_name: String,
     pub cask: Option<bool>,
 }
@@ -234,6 +255,7 @@ pub struct PackageStatusParams {
 #[serde(rename_all = "camelCase")]
 pub struct PackagesStatusParams {
     pub manager: Option<String>,
+    #[serde(alias = "package_names")]
     pub package_names: Vec<String>,
     pub cask: Option<bool>,
 }
@@ -242,6 +264,7 @@ pub struct PackagesStatusParams {
 #[serde(rename_all = "camelCase")]
 pub struct PackageActionParams {
     pub manager: Option<String>,
+    #[serde(alias = "package_name")]
     pub package_name: String,
     pub action: Option<String>,
     pub version: Option<String>,
@@ -262,6 +285,7 @@ pub struct KillProcessParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WingetInstallParams {
+    #[serde(alias = "package_name")]
     pub package_name: String,
     pub options: Option<Value>,
 }
@@ -269,7 +293,9 @@ pub struct WingetInstallParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WriteBase64FileParams {
+    #[serde(alias = "file_path")]
     pub file_path: String,
+    #[serde(alias = "data_base64")]
     pub data_base64: String,
 }
 
@@ -285,10 +311,102 @@ pub struct UploadSaveImageParams {
     pub source_module: Option<String>,
 }
 
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectSshServerParams {
+    pub config: otools::SshConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendSshInputParams {
+    #[serde(default, alias = "server_id")]
+    pub server_id: String,
+    #[serde(default, alias = "session_id")]
+    pub session_id: String,
+    #[serde(default)]
+    pub input: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisconnectSshServerParams {
+    #[serde(default, alias = "server_id")]
+    pub server_id: String,
+    #[serde(default, alias = "session_id")]
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IsSshConnectedParams {
+    #[serde(default, alias = "session_id")]
+    pub session_id: String,
+}
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UuidParams {
     pub uuid: String,
+    #[serde(rename = "intervalMs", alias = "interval_ms")]
+    pub interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutBindingParams {
+    #[serde(alias = "plugin_uuid")]
+    pub plugin_uuid: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutBindingUpsertParams {
+    pub binding: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchAtStartupParams {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebviewWindowParams {
+    pub label: Option<String>,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    #[serde(alias = "plugin_uuid")]
+    pub plugin_uuid: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebviewLabelParams {
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebviewSwitchParams {
+    pub active_label: Option<String>,
+    pub all_labels: Option<Vec<String>>,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebviewLoadingParams {
+    pub visible: Option<bool>,
+    pub all_labels: Option<Vec<String>>,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub width: Option<f64>,
+    pub height: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -387,17 +505,424 @@ pub async fn otools_get_all_plugins(
     Ok(Json(otools::otools_get_all_plugins().await?))
 }
 
-pub async fn otools_reload_all_plugins() -> Result<Json<()>, AppCommandError> {
-    otools::otools_reload_all_plugins().await?;
-    Ok(Json(()))
+pub async fn otools_reload_all_plugins(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<otools::OtoolsPluginInfo>>, AppCommandError> {
+    Ok(Json(
+        otools::otools_reload_all_plugins_with_emitter(state.emitter.clone()).await?,
+    ))
 }
 
 pub async fn bridge_ping() -> Result<Json<String>, AppCommandError> {
     Ok(Json(otools::bridge_ping().await?))
 }
 
-pub async fn otools_show_main_window() -> Result<Json<()>, AppCommandError> {
+pub async fn otools_show_main_window(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        crate::commands::windows::show_main_window(&app);
+        return Ok(Json(()));
+    }
+
+    crate::web::event_bridge::emit_event(
+        &state.emitter,
+        "otools-show-main-window",
+        serde_json::json!({ "ok": true }),
+    );
     otools::otools_show_main_window_core();
+    Ok(Json(()))
+}
+
+pub async fn show_main_window(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        crate::commands::windows::show_main_window(&app);
+        return Ok(Json(()));
+    }
+
+    crate::web::event_bridge::emit_event(
+        &state.emitter,
+        "otools-show-main-window",
+        serde_json::json!({ "ok": true }),
+    );
+    otools::otools_show_main_window_core();
+    Ok(Json(()))
+}
+
+pub async fn enable_remote_ui(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<RemoteUiParams>,
+) -> Result<Json<String>, AppCommandError> {
+    let _ = params.port;
+    if let Some(info) = do_get_web_server_status(&state.web_server_state) {
+        return Ok(Json(format!("Remote Service 已启动，端口: {}", info.port)));
+    }
+    Ok(Json("Remote Service 由 codeg Web 服务提供".to_string()))
+}
+
+pub async fn disable_remote_ui() -> Result<Json<String>, AppCommandError> {
+    Ok(Json("Remote Service 由 codeg Web 服务管理".to_string()))
+}
+
+pub async fn remote_service_status(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<Value>, AppCommandError> {
+    Ok(Json(otools::remote_service_status_value(
+        do_get_web_server_status(&state.web_server_state),
+    )))
+}
+
+pub async fn otools_request_app_exit(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<()>, AppCommandError> {
+    crate::web::event_bridge::emit_event(
+        &state.emitter,
+        "otools-request-app-exit",
+        serde_json::json!({ "ok": true }),
+    );
+    Ok(Json(()))
+}
+
+pub async fn otools_get_launch_at_startup(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<bool>, AppCommandError> {
+    let _ = &state;
+
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        return Ok(Json(otools::otools_get_launch_at_startup(app).await?));
+    }
+
+    Ok(Json(false))
+}
+
+pub async fn otools_set_launch_at_startup(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<LaunchAtStartupParams>,
+) -> Result<Json<bool>, AppCommandError> {
+    let _ = &state;
+
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        return Ok(Json(
+            otools::otools_set_launch_at_startup(app, params.enabled).await?,
+        ));
+    }
+
+    let _ = params.enabled;
+    Ok(Json(false))
+}
+
+pub async fn otools_get_global_shortcut_bindings(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<Value>>, AppCommandError> {
+    let _ = &state;
+
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let shortcut_state = app.state::<otools_platform_shortcuts::OtoolsGlobalShortcutState>();
+        let bindings =
+            otools_platform_shortcuts::otools_get_global_shortcut_bindings(&shortcut_state)
+                .map_err(map_otools_host_error)?
+                .into_iter()
+                .filter_map(|binding| serde_json::to_value(binding).ok())
+                .collect();
+        return Ok(Json(bindings));
+    }
+
+    Ok(Json(Vec::new()))
+}
+
+pub async fn otools_get_global_shortcut_binding(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<ShortcutBindingParams>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let shortcut_state = app.state::<otools_platform_shortcuts::OtoolsGlobalShortcutState>();
+        let binding =
+            otools_platform_shortcuts::otools_get_global_shortcut_binding(
+                params.plugin_uuid,
+                &shortcut_state,
+            )
+            .map_err(map_otools_host_error)?
+            .and_then(|binding| serde_json::to_value(binding).ok());
+        return Ok(Json(binding));
+    }
+
+    let _ = (state, params.plugin_uuid);
+    Ok(Json(None))
+}
+
+pub async fn otools_upsert_global_shortcut_binding(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<ShortcutBindingUpsertParams>,
+) -> Result<Json<Value>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let binding =
+            serde_json::from_value::<otools_platform_shortcuts::OtoolsGlobalShortcutBinding>(
+                params.binding,
+            )
+            .map_err(|error| AppCommandError::invalid_input(error.to_string()))?;
+        let shortcut_state = app.state::<otools_platform_shortcuts::OtoolsGlobalShortcutState>();
+        let binding = otools_platform_shortcuts::otools_upsert_global_shortcut_binding(
+                app.clone(),
+                binding,
+                &shortcut_state,
+            )
+            .map_err(map_otools_host_error)?;
+        return serde_json::to_value(binding)
+            .map(Json)
+            .map_err(|error| AppCommandError::task_execution_failed(error.to_string()));
+    }
+
+    let _ = state;
+    Ok(Json(params.binding))
+}
+
+pub async fn otools_remove_global_shortcut_binding(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<ShortcutBindingParams>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let shortcut_state = app.state::<otools_platform_shortcuts::OtoolsGlobalShortcutState>();
+        otools_platform_shortcuts::otools_remove_global_shortcut_binding(
+            app.clone(),
+            params.plugin_uuid,
+            &shortcut_state,
+        )
+        .map_err(map_otools_host_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = (state, params.plugin_uuid);
+    Ok(Json(()))
+}
+
+pub async fn create_tools_tab_window(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WebviewWindowParams>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        otools_platform_webview::create_tools_tab_window(
+            app,
+            params.label.unwrap_or_default(),
+            params.title.unwrap_or_default(),
+            params.url.unwrap_or_default(),
+            params.plugin_uuid,
+        )
+        .await
+        .map_err(map_otools_webview_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = state;
+    let _ = params;
+    Ok(Json(()))
+}
+
+pub async fn create_embedded_webview(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WebviewWindowParams>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        otools_platform_webview::create_embedded_webview(
+            app,
+            params.label.unwrap_or_default(),
+            params.title.unwrap_or_default(),
+            params.url.unwrap_or_default(),
+        )
+        .await
+        .map_err(map_otools_webview_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = state;
+    let _ = params;
+    Ok(Json(()))
+}
+
+pub async fn close_tools_tab_window(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WebviewLabelParams>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        otools_platform_webview::close_tools_tab_window(app, params.label.unwrap_or_default())
+            .map_err(map_otools_webview_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = state;
+    let _ = params;
+    Ok(Json(()))
+}
+
+pub async fn close_embedded_webview(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WebviewLabelParams>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        otools_platform_webview::close_embedded_webview(app, params.label.unwrap_or_default())
+            .map_err(map_otools_webview_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = state;
+    let _ = params;
+    Ok(Json(()))
+}
+
+pub async fn switch_and_position_tools_windows(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WebviewSwitchParams>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        otools_platform_webview::switch_and_position_tools_windows(
+            app,
+            params.active_label,
+            params.all_labels.unwrap_or_default(),
+            params.x.unwrap_or_default(),
+            params.y.unwrap_or_default(),
+            params.width.unwrap_or_default(),
+            params.height.unwrap_or_default(),
+        )
+        .map_err(map_otools_webview_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = state;
+    let _ = params;
+    Ok(Json(()))
+}
+
+pub async fn switch_and_position_embedded_webviews(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WebviewSwitchParams>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        otools_platform_webview::switch_and_position_embedded_webviews(
+            app,
+            params.active_label,
+            params.all_labels.unwrap_or_default(),
+            params.x.unwrap_or_default(),
+            params.y.unwrap_or_default(),
+            params.width.unwrap_or_default(),
+            params.height.unwrap_or_default(),
+        )
+        .map_err(map_otools_webview_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = state;
+    let _ = params;
+    Ok(Json(()))
+}
+
+pub async fn set_tools_loading_state(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WebviewLoadingParams>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        otools_platform_webview::set_tools_loading_state(
+            app,
+            params.visible.unwrap_or(false),
+            params.all_labels.unwrap_or_default(),
+            params.x.unwrap_or_default(),
+            params.y.unwrap_or_default(),
+            params.width.unwrap_or_default(),
+            params.height.unwrap_or_default(),
+        )
+        .map_err(map_otools_webview_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = state;
+    let _ = params;
+    Ok(Json(()))
+}
+
+pub async fn tools_tab_exists(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WebviewLabelParams>,
+) -> Result<Json<bool>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        return Ok(Json(otools_platform_webview::tools_tab_exists(
+            app,
+            params.label.unwrap_or_default(),
+        )));
+    }
+
+    let _ = state;
+    let _ = params;
+    Ok(Json(false))
+}
+
+pub async fn embedded_webview_exists(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WebviewLabelParams>,
+) -> Result<Json<bool>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        return Ok(Json(otools_platform_webview::embedded_webview_exists(
+            app,
+            params.label.unwrap_or_default(),
+        )));
+    }
+
+    let _ = state;
+    let _ = params;
+    Ok(Json(false))
+}
+
+pub async fn tools_sync_child_webview_theme(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let payload =
+            serde_json::from_value::<otools_platform_webview::ToolsChildThemePayload>(payload)
+                .map_err(|error| AppCommandError::invalid_input(error.to_string()))?;
+        otools_platform_webview::tools_sync_child_webview_theme(app, payload)
+            .map_err(map_otools_webview_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = state;
+    let _ = payload;
+    Ok(Json(()))
+}
+
+pub async fn tools_sync_child_webview_locale(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let payload =
+            serde_json::from_value::<otools_platform_webview::ToolsChildLocalePayload>(payload)
+                .map_err(|error| AppCommandError::invalid_input(error.to_string()))?;
+        otools_platform_webview::tools_sync_child_webview_locale(app, payload)
+            .map_err(map_otools_webview_error)?;
+        return Ok(Json(()));
+    }
+
+    let _ = state;
+    let _ = payload;
     Ok(Json(()))
 }
 
@@ -706,6 +1231,89 @@ fn require_key(value: Option<String>) -> Result<String, AppCommandError> {
     value.ok_or_else(|| AppCommandError::invalid_input("key is required"))
 }
 
+fn remote_request_payload(payload: Value) -> Value {
+    payload
+        .as_object()
+        .and_then(|object| object.get("request"))
+        .cloned()
+        .unwrap_or(payload)
+}
+
+fn parse_remote_request<T: DeserializeOwned>(payload: Value) -> Result<T, AppCommandError> {
+    serde_json::from_value(remote_request_payload(payload))
+        .map_err(|error| AppCommandError::invalid_input(error.to_string()))
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn parse_webview_options_payload<T: DeserializeOwned>(
+    payload: Value,
+) -> Result<Option<T>, AppCommandError> {
+    let options = payload
+        .as_object()
+        .and_then(|object| object.get("options"))
+        .cloned()
+        .unwrap_or(payload);
+    if options.is_null() {
+        return Ok(None);
+    }
+    serde_json::from_value(options)
+        .map(Some)
+        .map_err(|error| AppCommandError::invalid_input(error.to_string()))
+}
+
+fn read_remote_request_path(payload: Value) -> Option<String> {
+    let request = remote_request_payload(payload);
+    read_value_field(&request, "path")
+}
+
+fn read_value_field(value: &Value, field: &str) -> Option<String> {
+    value
+        .as_object()
+        .and_then(|object| object.get(field))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn desktop_app_handle(state: &AppState) -> Option<tauri::AppHandle> {
+    match &state.emitter {
+        crate::web::event_bridge::EventEmitter::Tauri(app) => Some(app.clone()),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn map_otools_host_error(error: otools_host::HostError) -> AppCommandError {
+    let mut app_error = match error.code {
+        otools_host::HostErrorCode::InvalidInput => {
+            AppCommandError::invalid_input(error.message)
+        }
+        otools_host::HostErrorCode::ConfigurationInvalid => {
+            AppCommandError::configuration_invalid(error.message)
+        }
+        otools_host::HostErrorCode::NotFound => AppCommandError::not_found(error.message),
+        otools_host::HostErrorCode::AlreadyExists => {
+            AppCommandError::already_exists(error.message)
+        }
+        otools_host::HostErrorCode::PermissionDenied => {
+            AppCommandError::permission_denied(error.message)
+        }
+        otools_host::HostErrorCode::IoError => AppCommandError::io_error(error.message),
+        otools_host::HostErrorCode::TaskExecutionFailed => {
+            AppCommandError::task_execution_failed(error.message)
+        }
+    };
+    app_error.detail = error.detail;
+    app_error
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn map_otools_webview_error(message: String) -> AppCommandError {
+    AppCommandError::task_execution_failed(message)
+}
+
 pub async fn get_otools_config() -> Result<Json<otools::OtoolsConfig>, AppCommandError> {
     Ok(Json(otools::get_otools_config().await?))
 }
@@ -769,9 +1377,11 @@ pub async fn otools_plugin_command_invoke(
 }
 
 pub async fn otools_emit_tools_shell_shortcut(
+    Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<ShellShortcutParams>,
 ) -> Result<Json<()>, AppCommandError> {
-    otools::otools_emit_tools_shell_shortcut(params.action).await?;
+    otools::otools_emit_tools_shell_shortcut_with_emitter(params.action, state.emitter.clone())
+        .await?;
     Ok(Json(()))
 }
 
@@ -807,6 +1417,68 @@ pub async fn native_plugin_poll_events(
     Ok(Json(otools::native_plugin_poll_events(params.uuid).await?))
 }
 
+pub async fn native_plugin_listen_acquire(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<UuidParams>,
+) -> Result<Json<Value>, AppCommandError> {
+    otools::native_plugin_listen_acquire_with_emitter(
+        params.uuid.clone(),
+        params.interval_ms,
+        state.emitter.clone(),
+    )?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "pluginUuid": params.uuid,
+    })))
+}
+
+pub async fn native_plugin_listen_release(
+    Json(params): Json<UuidParams>,
+) -> Result<Json<Value>, AppCommandError> {
+    otools::native_plugin_listen_release(params.uuid.clone()).await?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "pluginUuid": params.uuid,
+    })))
+}
+
+
+pub async fn connect_ssh_server(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<ConnectSshServerParams>,
+) -> Result<Json<String>, AppCommandError> {
+    let emitter = state.emitter.clone();
+    let config = params.config;
+    let message = tokio::task::spawn_blocking(move || {
+        otools::connect_ssh_server_with_emitter(config, emitter)
+    })
+    .await
+    .map_err(|error| {
+        AppCommandError::task_execution_failed("SSH connect task failed")
+            .with_detail(error.to_string())
+    })??;
+    Ok(Json(message))
+}
+
+pub async fn send_ssh_input(
+    Json(params): Json<SendSshInputParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::send_ssh_input(params.server_id, params.session_id, params.input).await?;
+    Ok(Json(()))
+}
+
+pub async fn disconnect_ssh_server(
+    Json(params): Json<DisconnectSshServerParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::disconnect_ssh_server(params.server_id, params.session_id).await?;
+    Ok(Json(()))
+}
+
+pub async fn is_ssh_connected(
+    Json(params): Json<IsSshConnectedParams>,
+) -> Result<Json<bool>, AppCommandError> {
+    Ok(Json(otools::is_ssh_connected(params.session_id).await?))
+}
 pub async fn otools_poll_events() -> Result<Json<Vec<Value>>, AppCommandError> {
     Ok(Json(otools::otools_poll_events().await?))
 }
@@ -959,6 +1631,211 @@ pub async fn tools_webview_read_file(
     Ok(Json(otools::tools_webview_read_file(params.path).await?))
 }
 
+pub async fn tools_webview_pick_files(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Vec<Value>>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let files = otools_platform_webview::tools_webview_pick_files(
+            app,
+            parse_webview_options_payload(payload)?,
+        )
+        .await
+        .map_err(map_otools_webview_error)?
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| AppCommandError::task_execution_failed(error.to_string()))?;
+        return Ok(Json(files));
+    }
+
+    let _ = state;
+    let _ = payload;
+    Ok(Json(Vec::new()))
+}
+
+pub async fn tools_webview_pick_save_path(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let picked = otools_platform_webview::tools_webview_pick_save_path(
+            app,
+            parse_webview_options_payload(payload)?,
+        )
+        .await
+        .map_err(map_otools_webview_error)?
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| AppCommandError::task_execution_failed(error.to_string()))?;
+        return Ok(Json(picked));
+    }
+
+    let _ = state;
+    let _ = payload;
+    Ok(Json(None))
+}
+
+pub async fn tools_webview_pick_folder(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let picked = otools_platform_webview::tools_webview_pick_folder(
+            app,
+            parse_webview_options_payload(payload)?,
+        )
+        .await
+        .map_err(map_otools_webview_error)?
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| AppCommandError::task_execution_failed(error.to_string()))?;
+        return Ok(Json(picked));
+    }
+
+    let _ = state;
+    let _ = payload;
+    Ok(Json(None))
+}
+
+pub async fn remote_service_pick_files(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Vec<Value>>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let files = otools_platform_webview::tools_webview_pick_files(
+            app,
+            parse_webview_options_payload(remote_request_payload(payload))?,
+        )
+        .await
+        .map_err(map_otools_webview_error)?
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| AppCommandError::task_execution_failed(error.to_string()))?;
+        return Ok(Json(files));
+    }
+
+    let _ = state;
+    let _ = payload;
+    Ok(Json(Vec::new()))
+}
+
+pub async fn remote_service_pick_save_path(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let picked = otools_platform_webview::tools_webview_pick_save_path(
+            app,
+            parse_webview_options_payload(remote_request_payload(payload))?,
+        )
+        .await
+        .map_err(map_otools_webview_error)?
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| AppCommandError::task_execution_failed(error.to_string()))?;
+        return Ok(Json(picked));
+    }
+
+    let _ = state;
+    let _ = payload;
+    Ok(Json(None))
+}
+
+pub async fn remote_service_pick_folder(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Option<Value>>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        let picked = otools_platform_webview::tools_webview_pick_folder(
+            app,
+            parse_webview_options_payload(remote_request_payload(payload))?,
+        )
+        .await
+        .map_err(map_otools_webview_error)?
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| AppCommandError::task_execution_failed(error.to_string()))?;
+        return Ok(Json(picked));
+    }
+
+    let _ = state;
+    let _ = payload;
+    Ok(Json(None))
+}
+
+pub async fn remote_service_read_file(
+    Json(params): Json<PathParams>,
+) -> Result<Json<otools::WebviewReadFilePayload>, AppCommandError> {
+    Ok(Json(otools::tools_webview_read_file(params.path).await?))
+}
+
+pub async fn remote_service_write_file(
+    Json(payload): Json<Value>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::tools_webview_write_file(parse_remote_request(payload)?).await?;
+    Ok(Json(()))
+}
+
+pub async fn remote_service_list_dir(
+    Json(params): Json<PathParams>,
+) -> Result<Json<Vec<otools::WebviewDirEntry>>, AppCommandError> {
+    Ok(Json(otools::tools_webview_list_dir(params.path).await?))
+}
+
+pub async fn remote_service_browse_dialog(
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, AppCommandError> {
+    Ok(Json(
+        otools::tools_webview_browse_dialog(read_remote_request_path(payload)).await?,
+    ))
+}
+
+pub async fn remote_service_home_dir() -> Result<Json<String>, AppCommandError> {
+    Ok(Json(otools::tools_webview_home_dir().await?))
+}
+
+pub async fn remote_service_join_path(
+    Json(params): Json<JoinPathParams>,
+) -> Result<Json<String>, AppCommandError> {
+    Ok(Json(otools::tools_webview_join_path(params.parts).await?))
+}
+
+pub async fn remote_service_create_dir(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::tools_webview_create_dir(params.path).await?;
+    Ok(Json(()))
+}
+
+pub async fn remote_service_touch_file(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::tools_webview_touch_file(params.path).await?;
+    Ok(Json(()))
+}
+
+pub async fn remote_service_remove_entry(
+    Json(params): Json<RemoveEntryParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::tools_webview_remove_entry(params.path, params.recursive).await?;
+    Ok(Json(()))
+}
+
+pub async fn remote_service_rename_entry(
+    Json(payload): Json<Value>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::tools_webview_rename_entry(parse_remote_request(payload)?).await?;
+    Ok(Json(()))
+}
+
 pub async fn tools_webview_file_meta(
     Json(params): Json<PathParams>,
 ) -> Result<Json<otools::WebviewFileMeta>, AppCommandError> {
@@ -1046,9 +1923,12 @@ pub async fn upload_save_image(
 }
 
 pub async fn otools_set_status_bar_state(
+    Extension(state): Extension<Arc<AppState>>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, AppCommandError> {
-    Ok(Json(otools::otools_set_status_bar_state(payload).await?))
+    Ok(Json(
+        otools::otools_set_status_bar_state_with_emitter(payload, state.emitter.clone()).await?,
+    ))
 }
 
 pub async fn otools_copy_text(
@@ -1089,7 +1969,47 @@ pub async fn otools_shell_open_path(
     Ok(Json(()))
 }
 
+pub async fn open_directory(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_open_path(params.path).await?;
+    Ok(Json(()))
+}
+
+pub async fn remote_service_shell_open(
+    Json(payload): Json<Value>,
+) -> Result<Json<()>, AppCommandError> {
+    let request = remote_request_payload(payload);
+    let target = read_value_field(&request, "path")
+        .or_else(|| read_value_field(&request, "url"))
+        .unwrap_or_default();
+    if target.starts_with("http://")
+        || target.starts_with("https://")
+        || target.starts_with("mailto:")
+        || target.starts_with("tel:")
+    {
+        otools::otools_shell_open_external(target).await?;
+    } else {
+        otools::otools_shell_open_path(target).await?;
+    }
+    Ok(Json(()))
+}
+
+pub async fn remote_service_shell_open_path(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_open_path(params.path).await?;
+    Ok(Json(()))
+}
+
 pub async fn otools_shell_show_item_in_folder(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_show_item_in_folder(params.path).await?;
+    Ok(Json(()))
+}
+
+pub async fn remote_service_shell_show_item_in_folder(
     Json(params): Json<PathParams>,
 ) -> Result<Json<()>, AppCommandError> {
     otools::otools_shell_show_item_in_folder(params.path).await?;
@@ -1103,7 +2023,21 @@ pub async fn otools_shell_trash_item(
     Ok(Json(()))
 }
 
+pub async fn remote_service_shell_trash_item(
+    Json(params): Json<PathParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_trash_item(params.path).await?;
+    Ok(Json(()))
+}
+
 pub async fn otools_shell_open_external(
+    Json(params): Json<UrlParams>,
+) -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_open_external(params.url).await?;
+    Ok(Json(()))
+}
+
+pub async fn remote_service_shell_open_external(
     Json(params): Json<UrlParams>,
 ) -> Result<Json<()>, AppCommandError> {
     otools::otools_shell_open_external(params.url).await?;
@@ -1115,11 +2049,21 @@ pub async fn otools_shell_beep() -> Result<Json<()>, AppCommandError> {
     Ok(Json(()))
 }
 
+pub async fn remote_service_shell_beep() -> Result<Json<()>, AppCommandError> {
+    otools::otools_shell_beep().await?;
+    Ok(Json(()))
+}
+
 pub async fn otools_show_notification(
+    Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<MessageParams>,
 ) -> Result<Json<()>, AppCommandError> {
-    otools::otools_show_notification(params.body.unwrap_or_default(), params.click_feature_code)
-        .await?;
+    otools::otools_show_notification_with_emitter(
+        params.body.unwrap_or_default(),
+        params.click_feature_code,
+        state.emitter.clone(),
+    )
+    .await?;
     Ok(Json(()))
 }
 

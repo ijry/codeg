@@ -1,0 +1,10 @@
+[package]
+name = "otools-plugin-dev-model"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../../../core" }
+otools-plugin-support = { path = "../../support" }
+serde = { version = "1", features = ["derive"] }
+url = "2"

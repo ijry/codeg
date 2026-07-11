@@ -1,0 +1,10 @@
+[package]
+name = "otools-plugin-dev-workspace"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../../../core" }
+otools-plugin-dev-api = { path = "../api" }
+otools-plugin-dev-state = { path = "../state" }
+otools-plugin-support = { path = "../../support" }

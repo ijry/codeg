@@ -1,0 +1,8 @@
+[package]
+name = "otools-plugin-dev-preview"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../../../core" }
+url = "2"

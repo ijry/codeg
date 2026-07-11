@@ -1,6 +1,6 @@
 #[cfg(feature = "tauri-runtime")]
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::app_error::{AppCommandError, AppErrorCode};
 
@@ -23,6 +23,63 @@ pub fn open_otools_window_core() -> OtoolsNavigationResult {
 }
 
 pub fn otools_show_main_window_core() {}
+
+pub fn remote_service_status_value(info: Option<crate::web::WebServerInfo>) -> Value {
+    match info {
+        Some(info) => json!({
+            "running": true,
+            "port": info.port,
+            "urls": info.addresses,
+        }),
+        None => json!({
+            "running": false,
+            "port": 0,
+            "urls": [],
+        }),
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn enable_remote_ui(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::web::WebServerState>,
+    port: Option<u16>,
+) -> Result<String, AppCommandError> {
+    if let Some(info) = crate::web::do_get_web_server_status(&state) {
+        return Ok(format!("Remote Service 已启动，端口: {}", info.port));
+    }
+
+    let info = crate::web::do_start_web_server_tauri(
+        app,
+        &state,
+        port,
+        None,
+        None,
+        crate::web::TunnelSyncReason::ManualStart,
+    )
+    .await?;
+    Ok(format!("Remote Service 已启动，端口: {}", info.port))
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn disable_remote_ui(
+    state: tauri::State<'_, crate::web::WebServerState>,
+) -> Result<String, AppCommandError> {
+    crate::web::do_stop_web_server(&state).await;
+    Ok("Remote Service 已停止".to_string())
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_status(
+    state: tauri::State<'_, crate::web::WebServerState>,
+) -> Result<Value, AppCommandError> {
+    Ok(remote_service_status_value(
+        crate::web::do_get_web_server_status(&state),
+    ))
+}
 
 #[cfg(feature = "tauri-runtime")]
 #[derive(Debug, Clone, Deserialize)]
@@ -386,8 +443,25 @@ pub async fn otools_get_all_plugins() -> Result<Vec<OtoolsPluginInfo>, AppComman
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
-pub async fn otools_reload_all_plugins() -> Result<(), AppCommandError> {
-    Ok(())
+pub async fn otools_reload_all_plugins() -> Result<Vec<OtoolsPluginInfo>, AppCommandError> {
+    otools_reload_all_plugins_with_emitter(resolve_otools_event_emitter()).await
+}
+
+pub async fn otools_reload_all_plugins_with_emitter(
+    emitter: crate::web::event_bridge::EventEmitter,
+) -> Result<Vec<OtoolsPluginInfo>, AppCommandError> {
+    let plugins = otools_host::otools_reload_all_plugins()
+        .await
+        .map_err(map_host_error)?;
+    crate::web::event_bridge::emit_event(
+        &emitter,
+        "otools-plugins-reloaded",
+        json!({
+            "count": plugins.len(),
+            "plugins": plugins,
+        }),
+    );
+    Ok(plugins)
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
@@ -400,6 +474,12 @@ pub async fn bridge_ping() -> Result<String, AppCommandError> {
 pub async fn otools_show_main_window(app: tauri::AppHandle) -> Result<(), AppCommandError> {
     crate::commands::windows::show_main_window(&app);
     Ok(())
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), AppCommandError> {
+    otools_show_main_window(app).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -854,9 +934,306 @@ pub async fn otools_plugin_command_invoke(
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_emit_tools_shell_shortcut(action: String) -> Result<(), AppCommandError> {
-    otools_host::otools_emit_tools_shell_shortcut(action)
-        .await
-        .map_err(map_host_error)
+    otools_emit_tools_shell_shortcut_with_emitter(action, resolve_otools_event_emitter()).await
+}
+
+pub async fn otools_emit_tools_shell_shortcut_with_emitter(
+    action: String,
+    emitter: crate::web::event_bridge::EventEmitter,
+) -> Result<(), AppCommandError> {
+    let action =
+        otools_host::validate_tools_shell_shortcut_action(&action).map_err(map_host_error)?;
+    crate::web::event_bridge::emit_event(
+        &emitter,
+        "otools-tools-shell-shortcut",
+        json!({ "action": action }),
+    );
+    Ok(())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn create_tools_tab_window(
+    app: tauri::AppHandle,
+    label: Option<String>,
+    title: Option<String>,
+    url: Option<String>,
+    plugin_uuid: Option<String>,
+) -> Result<(), AppCommandError> {
+    otools_platform_webview::create_tools_tab_window(
+        app,
+        label.unwrap_or_default(),
+        title.unwrap_or_default(),
+        url.unwrap_or_default(),
+        plugin_uuid,
+    )
+    .await
+    .map_err(map_platform_webview_error)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn create_tools_tab_window(
+    label: Option<String>,
+    title: Option<String>,
+    url: Option<String>,
+    plugin_uuid: Option<String>,
+) -> Result<(), AppCommandError> {
+    let _ = (label, title, url, plugin_uuid);
+    Ok(())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn create_embedded_webview(
+    app: tauri::AppHandle,
+    label: Option<String>,
+    title: Option<String>,
+    url: Option<String>,
+) -> Result<(), AppCommandError> {
+    otools_platform_webview::create_embedded_webview(
+        app,
+        label.unwrap_or_default(),
+        title.unwrap_or_default(),
+        url.unwrap_or_default(),
+    )
+    .await
+    .map_err(map_platform_webview_error)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn create_embedded_webview(
+    label: Option<String>,
+    title: Option<String>,
+    url: Option<String>,
+) -> Result<(), AppCommandError> {
+    let _ = (label, title, url);
+    Ok(())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn close_tools_tab_window(
+    app: tauri::AppHandle,
+    label: Option<String>,
+) -> Result<(), AppCommandError> {
+    otools_platform_webview::close_tools_tab_window(app, label.unwrap_or_default())
+        .map_err(map_platform_webview_error)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn close_tools_tab_window(label: Option<String>) -> Result<(), AppCommandError> {
+    let _ = label;
+    Ok(())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn close_embedded_webview(
+    app: tauri::AppHandle,
+    label: Option<String>,
+) -> Result<(), AppCommandError> {
+    otools_platform_webview::close_embedded_webview(app, label.unwrap_or_default())
+        .map_err(map_platform_webview_error)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn close_embedded_webview(label: Option<String>) -> Result<(), AppCommandError> {
+    let _ = label;
+    Ok(())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn switch_and_position_tools_windows(
+    app: tauri::AppHandle,
+    active_label: Option<String>,
+    all_labels: Option<Vec<String>>,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), AppCommandError> {
+    otools_platform_webview::switch_and_position_tools_windows(
+        app,
+        active_label,
+        all_labels.unwrap_or_default(),
+        x.unwrap_or_default(),
+        y.unwrap_or_default(),
+        width.unwrap_or_default(),
+        height.unwrap_or_default(),
+    )
+    .map_err(map_platform_webview_error)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn switch_and_position_tools_windows(
+    active_label: Option<String>,
+    all_labels: Option<Vec<String>>,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), AppCommandError> {
+    let _ = (active_label, all_labels, x, y, width, height);
+    Ok(())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn switch_and_position_embedded_webviews(
+    app: tauri::AppHandle,
+    active_label: Option<String>,
+    all_labels: Option<Vec<String>>,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), AppCommandError> {
+    otools_platform_webview::switch_and_position_embedded_webviews(
+        app,
+        active_label,
+        all_labels.unwrap_or_default(),
+        x.unwrap_or_default(),
+        y.unwrap_or_default(),
+        width.unwrap_or_default(),
+        height.unwrap_or_default(),
+    )
+    .map_err(map_platform_webview_error)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn switch_and_position_embedded_webviews(
+    active_label: Option<String>,
+    all_labels: Option<Vec<String>>,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), AppCommandError> {
+    let _ = (active_label, all_labels, x, y, width, height);
+    Ok(())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn set_tools_loading_state(
+    app: tauri::AppHandle,
+    visible: Option<bool>,
+    all_labels: Option<Vec<String>>,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), AppCommandError> {
+    otools_platform_webview::set_tools_loading_state(
+        app,
+        visible.unwrap_or(false),
+        all_labels.unwrap_or_default(),
+        x.unwrap_or_default(),
+        y.unwrap_or_default(),
+        width.unwrap_or_default(),
+        height.unwrap_or_default(),
+    )
+    .map_err(map_platform_webview_error)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn set_tools_loading_state(
+    visible: Option<bool>,
+    all_labels: Option<Vec<String>>,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), AppCommandError> {
+    let _ = (visible, all_labels, x, y, width, height);
+    Ok(())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn tools_tab_exists(
+    app: tauri::AppHandle,
+    label: Option<String>,
+) -> Result<bool, AppCommandError> {
+    Ok(otools_platform_webview::tools_tab_exists(
+        app,
+        label.unwrap_or_default(),
+    ))
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn tools_tab_exists(label: Option<String>) -> Result<bool, AppCommandError> {
+    let _ = label;
+    Ok(false)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn embedded_webview_exists(
+    app: tauri::AppHandle,
+    label: Option<String>,
+) -> Result<bool, AppCommandError> {
+    Ok(otools_platform_webview::embedded_webview_exists(
+        app,
+        label.unwrap_or_default(),
+    ))
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn embedded_webview_exists(label: Option<String>) -> Result<bool, AppCommandError> {
+    let _ = label;
+    Ok(false)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn tools_sync_child_webview_theme(
+    payload: Option<Value>,
+) -> Result<(), AppCommandError> {
+    let payload =
+        serde_json::from_value::<otools_platform_webview::ToolsChildThemePayload>(
+            payload.unwrap_or_default(),
+        )
+        .map_err(|error| AppCommandError::invalid_input(error.to_string()))?;
+    let Some(app) = otools_platform_app::current_app_handle() else {
+        return Ok(());
+    };
+    otools_platform_webview::tools_sync_child_webview_theme(app, payload)
+        .map_err(map_platform_webview_error)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn tools_sync_child_webview_theme(
+    payload: Option<Value>,
+) -> Result<(), AppCommandError> {
+    let _ = payload;
+    Ok(())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+#[cfg(feature = "tauri-runtime")]
+pub async fn tools_sync_child_webview_locale(
+    payload: Option<Value>,
+) -> Result<(), AppCommandError> {
+    let payload =
+        serde_json::from_value::<otools_platform_webview::ToolsChildLocalePayload>(
+            payload.unwrap_or_default(),
+        )
+        .map_err(|error| AppCommandError::invalid_input(error.to_string()))?;
+    let Some(app) = otools_platform_app::current_app_handle() else {
+        return Ok(());
+    };
+    otools_platform_webview::tools_sync_child_webview_locale(app, payload)
+        .map_err(map_platform_webview_error)
+}
+
+#[cfg(not(feature = "tauri-runtime"))]
+pub async fn tools_sync_child_webview_locale(
+    payload: Option<Value>,
+) -> Result<(), AppCommandError> {
+    let _ = payload;
+    Ok(())
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
@@ -940,6 +1317,35 @@ pub async fn native_plugin_poll_events(uuid: String) -> Result<Vec<Value>, AppCo
         AppCommandError::task_execution_failed("OTools native event poll task failed")
             .with_detail(error.to_string())
     })?
+}
+
+pub fn native_plugin_listen_acquire_with_emitter(
+    uuid: String,
+    interval_ms: Option<u64>,
+    emitter: crate::web::event_bridge::EventEmitter,
+) -> Result<(), AppCommandError> {
+    otools_host::native_plugin_listen_acquire(uuid, interval_ms, move |event, payload| {
+        crate::web::event_bridge::emit_event(&emitter, &event, payload);
+    })
+    .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn native_plugin_listen_acquire(
+    uuid: String,
+    interval_ms: Option<u64>,
+) -> Result<(), AppCommandError> {
+    native_plugin_listen_acquire_with_emitter(
+        uuid,
+        interval_ms,
+        resolve_otools_event_emitter(),
+    )
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn native_plugin_listen_release(uuid: String) -> Result<(), AppCommandError> {
+    otools_host::native_plugin_listen_release(uuid).map_err(map_host_error)?;
+    Ok(())
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
@@ -1138,6 +1544,159 @@ pub async fn tools_webview_read_file(
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn tools_webview_pick_files(
+    options: Option<Value>,
+) -> Result<Vec<Value>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = otools_platform_app::current_app_handle() {
+        let parsed = parse_webview_pick_options::<
+            otools_platform_webview::WebviewFilePickerOptions,
+        >(options)?;
+        let files = otools_platform_webview::tools_webview_pick_files(app, parsed)
+            .await
+            .map_err(map_platform_webview_error)?;
+        return files
+            .into_iter()
+            .map(|file| {
+                serde_json::to_value(file)
+                    .map_err(|error| AppCommandError::task_execution_failed(error.to_string()))
+            })
+            .collect();
+    }
+
+    let _ = options;
+    Ok(Vec::new())
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn tools_webview_pick_save_path(
+    options: Option<Value>,
+) -> Result<Option<Value>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = otools_platform_app::current_app_handle() {
+        let parsed = parse_webview_pick_options::<
+            otools_platform_webview::WebviewSaveFileOptions,
+        >(options)?;
+        let picked = otools_platform_webview::tools_webview_pick_save_path(app, parsed)
+            .await
+            .map_err(map_platform_webview_error)?;
+        return picked
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| AppCommandError::task_execution_failed(error.to_string()));
+    }
+
+    let _ = options;
+    Ok(None)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn tools_webview_pick_folder(
+    options: Option<Value>,
+) -> Result<Option<Value>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = otools_platform_app::current_app_handle() {
+        let parsed = parse_webview_pick_options::<
+            otools_platform_webview::WebviewPickFolderOptions,
+        >(options)?;
+        let picked = otools_platform_webview::tools_webview_pick_folder(app, parsed)
+            .await
+            .map_err(map_platform_webview_error)?;
+        return picked
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| AppCommandError::task_execution_failed(error.to_string()));
+    }
+
+    let _ = options;
+    Ok(None)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_pick_files(
+    options: Option<Value>,
+) -> Result<Vec<Value>, AppCommandError> {
+    tools_webview_pick_files(options).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_pick_save_path(
+    options: Option<Value>,
+) -> Result<Option<Value>, AppCommandError> {
+    tools_webview_pick_save_path(options).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_pick_folder(
+    options: Option<Value>,
+) -> Result<Option<Value>, AppCommandError> {
+    tools_webview_pick_folder(options).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_read_file(
+    path: String,
+) -> Result<WebviewReadFilePayload, AppCommandError> {
+    tools_webview_read_file(path).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_write_file(
+    request: WebviewWriteFileRequest,
+) -> Result<(), AppCommandError> {
+    tools_webview_write_file(request).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_list_dir(path: String) -> Result<Vec<WebviewDirEntry>, AppCommandError> {
+    tools_webview_list_dir(path).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_browse_dialog(
+    request: Option<Value>,
+) -> Result<Value, AppCommandError> {
+    let path = request
+        .and_then(|value| value.get("path").and_then(Value::as_str).map(str::to_string));
+    tools_webview_browse_dialog(path).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_home_dir() -> Result<String, AppCommandError> {
+    tools_webview_home_dir().await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_join_path(parts: Vec<String>) -> Result<String, AppCommandError> {
+    tools_webview_join_path(parts).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_create_dir(path: String) -> Result<(), AppCommandError> {
+    tools_webview_create_dir(path).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_touch_file(path: String) -> Result<(), AppCommandError> {
+    tools_webview_touch_file(path).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_remove_entry(
+    path: String,
+    recursive: Option<bool>,
+) -> Result<(), AppCommandError> {
+    tools_webview_remove_entry(path, recursive).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_rename_entry(
+    request: WebviewRenameEntryRequest,
+) -> Result<(), AppCommandError> {
+    tools_webview_rename_entry(request).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn tools_webview_file_meta(path: String) -> Result<WebviewFileMeta, AppCommandError> {
     otools_host::tools_webview_file_meta(path)
         .await
@@ -1235,9 +1794,17 @@ pub async fn upload_save_image(
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_set_status_bar_state(payload: Value) -> Result<Value, AppCommandError> {
+    otools_set_status_bar_state_with_emitter(payload, resolve_otools_event_emitter()).await
+}
+
+pub async fn otools_set_status_bar_state_with_emitter(
+    payload: Value,
+    emitter: crate::web::event_bridge::EventEmitter,
+) -> Result<Value, AppCommandError> {
     #[cfg(feature = "tauri-runtime")]
     apply_otools_status_bar_state(&payload)?;
 
+    crate::web::event_bridge::emit_event(&emitter, "otools-status-bar", payload.clone());
     otools_host::otools_set_status_bar_state(payload)
         .await
         .map_err(map_host_error)
@@ -1287,10 +1854,43 @@ pub async fn otools_shell_open_path(path: String) -> Result<(), AppCommandError>
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn open_directory(path: String) -> Result<(), AppCommandError> {
+    otools_shell_open_path(path).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_shell_open(request: Value) -> Result<(), AppCommandError> {
+    let target = value_string_field(&request, "path")
+        .or_else(|| value_string_field(&request, "url"))
+        .unwrap_or_default();
+    if target.starts_with("http://")
+        || target.starts_with("https://")
+        || target.starts_with("mailto:")
+        || target.starts_with("tel:")
+    {
+        otools_shell_open_external(target).await
+    } else {
+        otools_shell_open_path(target).await
+    }
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_shell_open_path(path: String) -> Result<(), AppCommandError> {
+    otools_shell_open_path(path).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_shell_show_item_in_folder(path: String) -> Result<(), AppCommandError> {
     otools_host::otools_shell_show_item_in_folder(path)
         .await
         .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_shell_show_item_in_folder(
+    path: String,
+) -> Result<(), AppCommandError> {
+    otools_shell_show_item_in_folder(path).await
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
@@ -1301,10 +1901,20 @@ pub async fn otools_shell_trash_item(path: String) -> Result<(), AppCommandError
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_shell_trash_item(path: String) -> Result<(), AppCommandError> {
+    otools_shell_trash_item(path).await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_shell_open_external(url: String) -> Result<(), AppCommandError> {
     otools_host::otools_shell_open_external(url)
         .await
         .map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_shell_open_external(url: String) -> Result<(), AppCommandError> {
+    otools_shell_open_external(url).await
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
@@ -1315,20 +1925,44 @@ pub async fn otools_shell_beep() -> Result<(), AppCommandError> {
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn remote_service_shell_beep() -> Result<(), AppCommandError> {
+    otools_shell_beep().await
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn otools_show_notification(
     body: String,
     click_feature_code: Option<String>,
 ) -> Result<(), AppCommandError> {
+    otools_show_notification_with_emitter(
+        body,
+        click_feature_code,
+        resolve_otools_event_emitter(),
+    )
+    .await
+}
+
+pub async fn otools_show_notification_with_emitter(
+    body: String,
+    click_feature_code: Option<String>,
+    emitter: crate::web::event_bridge::EventEmitter,
+) -> Result<(), AppCommandError> {
+    let title = click_feature_code
+        .clone()
+        .unwrap_or_else(|| "OTools".to_string());
+    crate::web::event_bridge::emit_event(
+        &emitter,
+        "otools-notification",
+        json!({
+            "title": title,
+            "body": body,
+            "clickFeatureCode": click_feature_code,
+        }),
+    );
+
     #[cfg(feature = "tauri-runtime")]
     if let Some(app) = otools_platform_app::current_app_handle() {
-        crate::commands::notification::send_notification(
-            app,
-            click_feature_code
-                .clone()
-                .unwrap_or_else(|| "OTools".to_string()),
-            body.clone(),
-        )
-        .await?;
+        crate::commands::notification::send_notification(app, title, body).await?;
         return Ok(());
     }
 
@@ -1462,6 +2096,90 @@ pub fn resolve_upload_static_path(
     otools_host::resolve_upload_static_path(relative_path).map_err(map_host_error)
 }
 
+fn value_string_field(value: &Value, field: &str) -> Option<String> {
+    value
+        .as_object()
+        .and_then(|object| object.get(field))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+
+pub use otools_host::SshConfig;
+
+fn ssh_event_sink(
+    emitter: crate::web::event_bridge::EventEmitter,
+) -> otools_host::SshEventSink {
+    std::sync::Arc::new(move |event: &str, payload: serde_json::Value| {
+        crate::web::event_bridge::emit_event(&emitter, event, payload);
+    })
+}
+
+pub fn connect_ssh_server_with_emitter(
+    config: SshConfig,
+    emitter: crate::web::event_bridge::EventEmitter,
+) -> Result<String, AppCommandError> {
+    otools_host::connect_ssh_server(config, ssh_event_sink(emitter)).map_err(map_host_error)
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn connect_ssh_server(config: SshConfig) -> Result<String, AppCommandError> {
+    let emitter = resolve_otools_event_emitter();
+    tokio::task::spawn_blocking(move || connect_ssh_server_with_emitter(config, emitter))
+        .await
+        .map_err(|error| {
+            AppCommandError::task_execution_failed("SSH connect task failed")
+                .with_detail(error.to_string())
+        })?
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn send_ssh_input(
+    server_id: String,
+    session_id: String,
+    input: String,
+) -> Result<(), AppCommandError> {
+    tokio::task::spawn_blocking(move || {
+        otools_host::send_ssh_input(server_id, session_id, input).map_err(map_host_error)
+    })
+    .await
+    .map_err(|error| {
+        AppCommandError::task_execution_failed("SSH input task failed")
+            .with_detail(error.to_string())
+    })?
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn disconnect_ssh_server(
+    server_id: String,
+    session_id: String,
+) -> Result<(), AppCommandError> {
+    tokio::task::spawn_blocking(move || {
+        otools_host::disconnect_ssh_server(server_id, session_id).map_err(map_host_error)
+    })
+    .await
+    .map_err(|error| {
+        AppCommandError::task_execution_failed("SSH disconnect task failed")
+            .with_detail(error.to_string())
+    })?
+}
+
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn is_ssh_connected(session_id: String) -> Result<bool, AppCommandError> {
+    Ok(otools_host::is_ssh_connected(&session_id))
+}
+
+fn resolve_otools_event_emitter() -> crate::web::event_bridge::EventEmitter {
+    #[cfg(feature = "tauri-runtime")]
+    {
+        if let Some(app) = otools_platform_app::current_app_handle() {
+            return crate::web::event_bridge::EventEmitter::Tauri(app);
+        }
+    }
+    crate::web::event_bridge::EventEmitter::Noop
+}
 fn map_host_error(error: otools_host::HostError) -> AppCommandError {
     let app_error = match error.code {
         otools_host::HostErrorCode::InvalidInput => AppCommandError::invalid_input(error.message),
@@ -1490,4 +2208,24 @@ fn map_host_error(error: otools_host::HostError) -> AppCommandError {
 #[cfg(feature = "tauri-runtime")]
 fn map_platform_app_error(message: String) -> AppCommandError {
     AppCommandError::task_execution_failed(message)
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn map_platform_webview_error(message: String) -> AppCommandError {
+    AppCommandError::task_execution_failed(message)
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn parse_webview_pick_options<T: serde::de::DeserializeOwned>(
+    options: Option<Value>,
+) -> Result<Option<T>, AppCommandError> {
+    let Some(value) = options else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|error| AppCommandError::invalid_input(error.to_string()))
 }

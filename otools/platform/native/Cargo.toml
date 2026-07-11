@@ -4,10 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-base64 = "0.22"
 libloading = "0.8"
 otools-core = { path = "../../core" }
-otools-plugin-state = { path = "../plugin-state" }
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+otools-platform-host-dispatch = { path = "../host-dispatch", default-features = false }
+otools-platform-native-contract = { path = "../native-contract" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

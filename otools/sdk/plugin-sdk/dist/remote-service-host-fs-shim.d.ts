@@ -1,0 +1,13 @@
+export declare const pickFiles: (options?: unknown) => Promise<unknown>;
+export declare const readFile: (path: string) => Promise<unknown>;
+export declare const pickSavePath: (options?: unknown) => Promise<unknown>;
+export declare const pickFolder: (options?: unknown) => Promise<unknown>;
+export declare const writeFile: (request: unknown) => Promise<unknown>;
+export declare const listDir: (path: string) => Promise<unknown>;
+export declare const browseDialog: (request?: unknown) => Promise<unknown>;
+export declare const homeDir: () => Promise<string>;
+export declare const joinPath: (...parts: unknown[]) => Promise<string>;
+export declare const createDir: (path: string) => Promise<unknown>;
+export declare const touchFile: (path: string) => Promise<unknown>;
+export declare const removeEntry: (path: string, recursive?: boolean) => Promise<unknown>;
+export declare const renameEntry: (from: string, to: string) => Promise<unknown>;

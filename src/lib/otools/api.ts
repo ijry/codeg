@@ -136,14 +136,14 @@ export async function emitOtoolsShellShortcut(
 }
 
 export async function requestOtoolsAppExit(): Promise<void> {
-  if (!isDesktop()) {
+  if (!canUseLocalDesktopHost()) {
     throw new Error("网页模式不支持退出本地 codeg-plus 宿主")
   }
   return getShellTransport().call("otools_request_app_exit")
 }
 
 export async function getOtoolsLaunchAtStartup(): Promise<boolean> {
-  if (!isDesktop()) {
+  if (!canUseLocalDesktopHost()) {
     return false
   }
   return getShellTransport().call("otools_get_launch_at_startup")
@@ -152,13 +152,17 @@ export async function getOtoolsLaunchAtStartup(): Promise<boolean> {
 export async function setOtoolsLaunchAtStartup(
   enabled: boolean
 ): Promise<boolean> {
-  if (!isDesktop()) {
+  if (!canUseLocalDesktopHost()) {
     if (enabled) {
       throw new Error("网页模式不支持设置本地 codeg-plus 开机启动")
     }
     return false
   }
   return getShellTransport().call("otools_set_launch_at_startup", { enabled })
+}
+
+function canUseLocalDesktopHost(): boolean {
+  return isDesktop() && getActiveRemoteConnectionId() === null
 }
 
 export async function invokeOtoolsNative<T = unknown>(
@@ -321,7 +325,7 @@ export async function publishDevVersion(
   })
 }
 
-export async function reloadOtoolsPlugins(): Promise<void> {
+export async function reloadOtoolsPlugins(): Promise<OtoolsPluginInfo[]> {
   return getTransport().call("otools_reload_all_plugins")
 }
 
@@ -370,10 +374,53 @@ export async function uninstallParkPlugin(
 }
 
 export function buildOtoolsPluginUrl(plugin: OtoolsPluginInfo): string {
+  const devUrl = String(plugin.devUrl || "").trim()
+  const source = String(plugin.source || "").trim().toLowerCase()
+  if (
+    devUrl &&
+    /^(https?|file|data):/i.test(devUrl) &&
+    (plugin.quickDev === true ||
+      source === "dev-debug" ||
+      source === "dev-workspace")
+  ) {
+    return devUrl
+  }
   if (/^(https?|file|data):/i.test(plugin.entry)) {
     return plugin.entry
   }
   const base = getServerBaseUrl().replace(/\/+$/, "")
   const entry = plugin.entry.replace(/^\/+/, "")
   return `${base}${plugin.assetBaseUrl}/${entry}`
+}
+
+export function buildOtoolsRuntimeUrl(
+  plugin: OtoolsPluginInfo,
+  options: {
+    sourceUrl?: string | null
+    title?: string | null
+    windowLabel?: string | null
+  } = {}
+): string {
+  const params = new URLSearchParams()
+  params.set("pluginUuid", plugin.uuid)
+
+  const windowLabel = String(options.windowLabel || "").trim()
+  if (windowLabel) {
+    params.set("windowLabel", windowLabel)
+  }
+
+  const title = String(options.title || "").trim()
+  if (title) {
+    params.set("title", title)
+  }
+
+  const sourceUrl =
+    typeof options.sourceUrl === "string"
+      ? options.sourceUrl.trim()
+      : buildOtoolsPluginUrl(plugin)
+  if (sourceUrl) {
+    params.set("sourceUrl", sourceUrl)
+  }
+
+  return `/otools/runtime?${params.toString()}`
 }

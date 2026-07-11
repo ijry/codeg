@@ -75,6 +75,7 @@ export function OtoolsPluginFrame({
         ref={frameRef}
         srcDoc={srcDoc}
         title={plugin.displayNameCn || plugin.displayName}
+        allow="clipboard-read; clipboard-write"
         className="h-full w-full border-0 bg-background"
         sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
         onLoad={() =>

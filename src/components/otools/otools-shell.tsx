@@ -24,7 +24,12 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { openUrl } from "@/lib/platform"
-import { getServerBaseUrl, getShellTransport, isDesktop } from "@/lib/transport"
+import {
+  getServerBaseUrl,
+  getShellTransport,
+  isDesktop,
+  isRemoteDesktopMode,
+} from "@/lib/transport"
 import {
   OTOOLS_HOST_CLOSE_TAB_EVENT,
   OTOOLS_HOST_CREATE_TAB_EVENT,
@@ -49,6 +54,7 @@ import {
 } from "../../../otools/plugins/web-registry"
 import {
   buildOtoolsPluginUrl,
+  buildOtoolsRuntimeUrl,
   getOtoolsHostInfo,
   listOtoolsPlugins,
 } from "@/lib/otools/api"
@@ -62,6 +68,13 @@ import {
   type OtoolsGlobalShortcutTriggeredPayload,
 } from "@/lib/otools/shortcut-events"
 import type { OtoolsHostInfo, OtoolsPluginInfo } from "@/lib/otools/types"
+
+const OTOOLS_TOOLS_SHELL_SHORTCUT_EVENT = "otools-tools-shell-shortcut"
+const OTOOLS_PLUGINS_RELOADED_EVENT = "otools-plugins-reloaded"
+const OTOOLS_NOTIFICATION_TRANSPORT_EVENT = "otools-notification"
+const OTOOLS_STATUS_BAR_TRANSPORT_EVENT = "otools-status-bar"
+const OTOOLS_REQUEST_APP_EXIT_EVENT = "otools-request-app-exit"
+const OTOOLS_SHOW_MAIN_WINDOW_EVENT = "otools-show-main-window"
 import { OtoolsPluginFrame } from "./otools-plugin-frame"
 
 type HomeTab = {
@@ -331,7 +344,7 @@ export function OtoolsShell() {
 
   const openPlugin = useCallback((plugin: OtoolsPluginInfo) => {
     if (plugin.openInBrowser) {
-      void openUrl(buildOtoolsPluginUrl(plugin)).catch((err) => {
+      void openUrl(buildPluginBrowserOpenUrl(plugin)).catch((err) => {
         console.error("[otools] failed to open plugin in browser", err)
         setError(err instanceof Error ? err.message : String(err))
       })
@@ -395,8 +408,9 @@ export function OtoolsShell() {
         ) ?? null
 
       if (plugin?.openInBrowser) {
+        const sourceUrl = String(detail.url || "").trim()
         void openUrl(
-          String(detail.url || "").trim() || buildOtoolsPluginUrl(plugin)
+          buildPluginBrowserOpenUrl(plugin, sourceUrl || undefined)
         ).catch((err) => {
           console.error(
             "[otools] failed to open host-managed plugin in browser",
@@ -545,6 +559,131 @@ export function OtoolsShell() {
       dispose?.()
     }
   }, [handleGlobalShortcut])
+
+  useEffect(() => {
+    let dispose: (() => void) | null = null
+    let cancelled = false
+
+    const normalizeAction = (
+      payload: unknown
+    ): OtoolsHostShellShortcutAction | null => {
+      if (typeof payload === "string") {
+        const action = payload.trim()
+        if (
+          action === "closeActiveTab" ||
+          action === "activatePrevTab" ||
+          action === "activateNextTab"
+        ) {
+          return action
+        }
+        return null
+      }
+      if (!payload || typeof payload !== "object") {
+        return null
+      }
+      const action = String(
+        (payload as { action?: unknown }).action || ""
+      ).trim()
+      if (
+        action === "closeActiveTab" ||
+        action === "activatePrevTab" ||
+        action === "activateNextTab"
+      ) {
+        return action
+      }
+      return null
+    }
+
+    void (async () => {
+      try {
+        const off = await getShellTransport().subscribe<unknown>(
+          OTOOLS_TOOLS_SHELL_SHORTCUT_EVENT,
+          (payload) => {
+            const action = normalizeAction(payload)
+            if (!action) {
+              return
+            }
+            runShellShortcutAction(action)
+          }
+        )
+
+        if (cancelled) {
+          off()
+        } else {
+          dispose = off
+        }
+      } catch (error) {
+        console.warn(
+          "[otools-shortcut] tools shell shortcut subscribe failed:",
+          error
+        )
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      dispose?.()
+    }
+  }, [runShellShortcutAction])
+
+  useEffect(() => {
+    let dispose: (() => void) | null = null
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const unsubscribers = await Promise.all([
+          getShellTransport().subscribe(OTOOLS_PLUGINS_RELOADED_EVENT, () => {
+            void loadPlugins()
+          }),
+          getShellTransport().subscribe(
+            OTOOLS_NOTIFICATION_TRANSPORT_EVENT,
+            (payload) => {
+              const detail = (payload || {}) as OtoolsHostNotificationDetail
+              window.dispatchEvent(
+                new CustomEvent(OTOOLS_HOST_NOTIFICATION_EVENT, { detail })
+              )
+            }
+          ),
+          getShellTransport().subscribe(
+            OTOOLS_STATUS_BAR_TRANSPORT_EVENT,
+            (payload) => {
+              const detail = (payload || {}) as OtoolsHostStatusBarDetail
+              window.dispatchEvent(
+                new CustomEvent(OTOOLS_HOST_STATUS_BAR_EVENT, { detail })
+              )
+            }
+          ),
+          getShellTransport().subscribe(OTOOLS_REQUEST_APP_EXIT_EVENT, () => {
+            try {
+              window.close()
+            } catch {}
+          }),
+          getShellTransport().subscribe(OTOOLS_SHOW_MAIN_WINDOW_EVENT, () => {
+            try {
+              window.opener?.focus()
+            } catch {}
+            window.focus()
+          }),
+        ])
+
+        if (cancelled) {
+          unsubscribers.forEach((off) => off())
+        } else {
+          dispose = () => {
+            unsubscribers.forEach((off) => off())
+          }
+        }
+      } catch (error) {
+        console.warn("[otools-host] transport subscribe failed:", error)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      dispose?.()
+    }
+  }, [loadPlugins])
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden">
@@ -899,7 +1038,12 @@ function OtoolsPluginView({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => window.open(buildOtoolsPluginUrl(plugin), "_blank")}
+          onClick={() =>
+            window.open(
+              buildOtoolsRuntimeUrl(plugin, { windowLabel }),
+              "_blank"
+            )
+          }
         >
           <ExternalLink className="h-3.5 w-3.5" />
           Open
@@ -941,6 +1085,7 @@ function OtoolsExternalView({ tab }: { tab: ExternalTab }) {
           ref={frameRef}
           src={tab.url}
           title={tab.title}
+          allow="clipboard-read; clipboard-write"
           className="min-h-0 flex-1 border-0 bg-background"
           sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
         />
@@ -1050,6 +1195,17 @@ function EmptyState({
 
 function displayName(plugin: OtoolsPluginInfo): string {
   return plugin.displayNameCn || plugin.displayName || plugin.uuid
+}
+
+function buildPluginBrowserOpenUrl(
+  plugin: OtoolsPluginInfo,
+  sourceUrl?: string
+): string {
+  const rawUrl = String(sourceUrl || "").trim() || buildOtoolsPluginUrl(plugin)
+  if (isDesktop() && !isRemoteDesktopMode()) {
+    return rawUrl
+  }
+  return buildOtoolsRuntimeUrl(plugin, { sourceUrl: rawUrl })
 }
 
 function resolvePluginIconUrl(plugin: OtoolsPluginInfo): string | null {

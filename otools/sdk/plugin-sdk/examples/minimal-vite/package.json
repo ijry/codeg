@@ -1,0 +1,20 @@
+{
+  "name": "otools-plugin-sdk-example-minimal-vite",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "otools-plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vite": "^7.3.0"
+  }
+}

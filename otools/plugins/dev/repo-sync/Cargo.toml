@@ -1,0 +1,13 @@
+[package]
+name = "otools-plugin-dev-repo-sync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4"
+otools-core = { path = "../../../core" }
+otools-plugin-dev-model = { path = "../model" }
+otools-plugin-dev-package = { path = "../package" }
+otools-plugin-dev-state = { path = "../state" }
+otools-plugin-support = { path = "../../support" }
+uuid = { version = "1", features = ["v4"] }

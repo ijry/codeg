@@ -247,9 +247,14 @@ mod tauri_app {
         process::ensure_user_npm_prefix_in_path();
 
         let builder =
-            tauri::Builder::default().register_uri_scheme_protocol("static", |_ctx, request| {
-                otools_static_protocol_response(&request.uri().to_string())
-            });
+            tauri::Builder::default()
+                .register_uri_scheme_protocol("static", |_ctx, request| {
+                    otools_static_protocol_response(&request.uri().to_string())
+                })
+                .register_uri_scheme_protocol(
+                    otools_platform_noder::NODER_PROTOCOL_SCHEME,
+                    |_ctx, request| otools_platform_noder::handle_protocol_request(request),
+                );
 
         // Must be the first plugin: it short-circuits second launches by
         // signalling the running instance and exiting before any other
@@ -1060,6 +1065,14 @@ mod tauri_app {
                 otools_commands::bridge_ping,
                 #[cfg(feature = "tauri-runtime")]
                 otools_commands::otools_show_main_window,
+                #[cfg(feature = "tauri-runtime")]
+                otools_commands::show_main_window,
+                #[cfg(feature = "tauri-runtime")]
+                otools_commands::enable_remote_ui,
+                #[cfg(feature = "tauri-runtime")]
+                otools_commands::disable_remote_ui,
+                #[cfg(feature = "tauri-runtime")]
+                otools_commands::remote_service_status,
                 otools_commands::project_editor_open,
                 otools_commands::project_runner_open_in_terminal,
                 otools_commands::project_runner_read_scripts,
@@ -1112,11 +1125,28 @@ mod tauri_app {
                 otools_commands::otools_ai_save_chat_history,
                 otools_commands::otools_plugin_command_invoke,
                 otools_commands::otools_emit_tools_shell_shortcut,
+                otools_commands::create_tools_tab_window,
+                otools_commands::create_embedded_webview,
+                otools_commands::close_tools_tab_window,
+                otools_commands::close_embedded_webview,
+                otools_commands::switch_and_position_tools_windows,
+                otools_commands::switch_and_position_embedded_webviews,
+                otools_commands::set_tools_loading_state,
+                otools_commands::tools_tab_exists,
+                otools_commands::embedded_webview_exists,
+                otools_commands::tools_sync_child_webview_theme,
+                otools_commands::tools_sync_child_webview_locale,
                 otools_commands::otools_native_invoke,
                 otools_commands::native_plugin_invoke,
                 otools_commands::native_plugin_probe,
                 otools_commands::native_plugin_reload,
                 otools_commands::native_plugin_poll_events,
+                otools_commands::native_plugin_listen_acquire,
+                otools_commands::native_plugin_listen_release,
+                otools_commands::connect_ssh_server,
+                otools_commands::send_ssh_input,
+                otools_commands::disconnect_ssh_server,
+                otools_commands::is_ssh_connected,
                 otools_commands::otools_poll_events,
                 otools_commands::dev_get_workspace,
                 otools_commands::dev_create_plugin,
@@ -1141,6 +1171,22 @@ mod tauri_app {
                 otools_commands::park_install_offline_plugin,
                 otools_commands::park_uninstall_plugin,
                 otools_commands::tools_webview_read_file,
+                otools_commands::tools_webview_pick_files,
+                otools_commands::tools_webview_pick_save_path,
+                otools_commands::tools_webview_pick_folder,
+                otools_commands::remote_service_pick_files,
+                otools_commands::remote_service_read_file,
+                otools_commands::remote_service_pick_save_path,
+                otools_commands::remote_service_pick_folder,
+                otools_commands::remote_service_write_file,
+                otools_commands::remote_service_list_dir,
+                otools_commands::remote_service_browse_dialog,
+                otools_commands::remote_service_home_dir,
+                otools_commands::remote_service_join_path,
+                otools_commands::remote_service_create_dir,
+                otools_commands::remote_service_touch_file,
+                otools_commands::remote_service_remove_entry,
+                otools_commands::remote_service_rename_entry,
                 otools_commands::tools_webview_file_meta,
                 otools_commands::tools_webview_write_file,
                 otools_commands::tools_webview_list_dir,
@@ -1160,10 +1206,17 @@ mod tauri_app {
                 otools_commands::otools_get_copied_files,
                 otools_commands::otools_get_file_icon,
                 otools_commands::otools_shell_open_path,
+                otools_commands::open_directory,
+                otools_commands::remote_service_shell_open,
+                otools_commands::remote_service_shell_open_path,
                 otools_commands::otools_shell_show_item_in_folder,
+                otools_commands::remote_service_shell_show_item_in_folder,
                 otools_commands::otools_shell_trash_item,
+                otools_commands::remote_service_shell_trash_item,
                 otools_commands::otools_shell_open_external,
+                otools_commands::remote_service_shell_open_external,
                 otools_commands::otools_shell_beep,
+                otools_commands::remote_service_shell_beep,
                 otools_commands::otools_show_notification,
                 otools_commands::otools_host_scan_storage_catalog,
                 otools_commands::otools_host_clean_storage_paths,

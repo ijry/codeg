@@ -1,0 +1,10 @@
+[package]
+name = "ot-storage-catalog"
+version = "0.1.0"
+edition = "2021"
+description = "Compatibility shim for legacy OTools storage catalog helpers"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

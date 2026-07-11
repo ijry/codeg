@@ -81,14 +81,60 @@ pub struct OtoolsPluginInfo {
     pub display_name_cn: Option<String>,
     pub developer_name: Option<String>,
     pub summary: Option<String>,
+    #[serde(default)]
+    pub screenshots: Vec<String>,
     pub version: Option<String>,
+    #[serde(
+        rename = "minOToolsVersion",
+        alias = "minOtoolsVersion",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub min_otools_version: Option<String>,
     pub icon: Option<String>,
+    #[serde(default)]
+    pub key: Vec<String>,
     pub entry: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub preload: Option<String>,
+    #[serde(default)]
+    pub has_ad: bool,
+    #[serde(default)]
+    pub in_plugin_purchase: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub dev_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quick_dev: Option<bool>,
     pub open_in_browser: bool,
     pub native_enabled: bool,
     pub permissions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub autostart: Option<catalog::ToolPluginAutostart>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub shutdown_hooks: Option<Vec<catalog::ToolPluginShutdownHook>>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub builtin: Option<bool>,
     pub source: String,
     pub asset_base_url: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+pub fn validate_plugin_id(value: &str) -> Result<String, HostError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 128
+        || !trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return Err(HostError::invalid_input("Invalid OTools plugin id"));
+    }
+    Ok(trimmed.to_string())
 }
 
 pub fn default_data_dir() -> PathBuf {
@@ -98,4 +144,24 @@ pub fn default_data_dir() -> PathBuf {
     dirs::data_dir()
         .map(|dir| dir.join("codeg"))
         .unwrap_or_else(|| PathBuf::from(".codeg-data"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_plugin_id_accepts_legacy_safe_ids() {
+        assert_eq!(
+            validate_plugin_id(" dev.plugin-1_2 ").expect("valid id"),
+            "dev.plugin-1_2"
+        );
+    }
+
+    #[test]
+    fn validate_plugin_id_rejects_path_like_ids() {
+        assert!(validate_plugin_id("../disk").is_err());
+        assert!(validate_plugin_id("bad/id").is_err());
+        assert!(validate_plugin_id("").is_err());
+    }
 }

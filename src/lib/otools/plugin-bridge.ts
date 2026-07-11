@@ -20,6 +20,7 @@ import {
 import { getCodegToken } from "@/lib/transport/web-auth"
 import {
   listOtoolsPlugins,
+  reloadOtoolsPlugins,
   getOtoolsConfig,
   getOtoolsConfigValue,
   getOtoolsPluginAsset,
@@ -97,14 +98,64 @@ const STATE_PATCH_COMMANDS = new Set([
   "patch_otools_plugin_syncstate_with_scheme",
 ])
 
+const DIRECT_TAURI_NOOP_COMMANDS = new Set([
+  "set_window_theme",
+  "update_tray_menu",
+])
+
+const OTOOLS_POPUP_COMMANDS = new Set([
+  "open_commit_window",
+  "open_merge_window",
+  "open_settings_window",
+  "open_stash_window",
+  "open_push_window",
+  "open_project_boot_window",
+])
+
+function withMenuGitPluginCompat(plugin: OtoolsPluginInfo) {
+  const record = { ...plugin }
+  if (!record.displayNameCN && record.displayNameCn) {
+    record.displayNameCN = record.displayNameCn
+  }
+  if (!record.displayNameCn && record.displayNameCN) {
+    record.displayNameCn = record.displayNameCN
+  }
+  if (!record.minOToolsVersion && record.minOtoolsVersion) {
+    record.minOToolsVersion = record.minOtoolsVersion
+  }
+  if (!record.minOtoolsVersion && record.minOToolsVersion) {
+    record.minOtoolsVersion = record.minOToolsVersion
+  }
+  if (!Array.isArray(record.screenshots)) {
+    record.screenshots = []
+  }
+  if (!Array.isArray(record.key)) {
+    record.key = []
+  }
+  if (!Array.isArray(record.permissions)) {
+    record.permissions = []
+  }
+  if (typeof record.enabled !== "boolean") {
+    record.enabled = true
+  }
+  return record
+}
+
+async function listOtoolsPluginsForBridge() {
+  const plugins = await listOtoolsPlugins()
+  return plugins.map(withMenuGitPluginCompat)
+}
+
 const OPEN_EXTERNAL_COMMANDS = new Set([
   "__otools_open_external",
+  "plugin:opener|open_url",
   "remote_service_shell_open_external",
   "otools_shell_open_external",
 ])
 
 const OPEN_PATH_COMMANDS = new Set([
   "__otools_open_path",
+  "plugin:opener|open_path",
   "remote_service_shell_open_path",
   "otools_shell_open_path",
 ])
@@ -118,6 +169,7 @@ const SHELL_OPEN_COMMANDS = new Set([
 
 const REVEAL_ITEM_COMMANDS = new Set([
   "__otools_reveal_item",
+  "plugin:opener|reveal_item_in_dir",
   "remote_service_shell_show_item_in_folder",
   "otools_shell_show_item_in_folder",
 ])
@@ -190,6 +242,9 @@ const TOOLS_WEBVIEW_FORWARD_COMMANDS = new Set([
 const NOTIFICATION_COMMANDS = new Set([
   "__otools_show_notification",
   "otools_show_notification",
+  "plugin:notification|notify",
+  "plugin:notification|send",
+  "plugin:notification|show",
 ])
 
 const CONFIG_COMMANDS = new Set([
@@ -201,6 +256,8 @@ const CONFIG_COMMANDS = new Set([
 const WINDOW_LABEL = "otools"
 const LOCAL_TERMINAL_OUTPUT_EVENT = "local-terminal-output"
 const LOCAL_TERMINAL_STATUS_EVENT = "local-terminal-status"
+const SSH_OUTPUT_EVENT = "ssh-output"
+const SSH_CONNECTION_STATUS_EVENT = "ssh-connection-status"
 const MAX_LOCAL_TERMINAL_BUFFERED_EVENTS = 400
 const OTOOLS_RUNTIME_RESERVED_QUERY_KEYS = new Set([
   "pluginUuid",
@@ -233,6 +290,17 @@ type OtoolsLocalTerminalSession = {
   unlistenExit: (() => void) | null
 }
 
+type OtoolsSshFrameSession = {
+  unlistenOutput: (() => void) | null
+  unlistenStatus: (() => void) | null
+  refs: number
+}
+
+type OtoolsFrameNativeListenSession = {
+  refs: number
+  unlisten: (() => void) | null
+}
+
 let copiedHostFiles: string[] = []
 let cachedOtoolsHostInfo: Promise<Record<string, unknown> | null> | null = null
 
@@ -245,6 +313,8 @@ export function installOtoolsFrameBridge(
   pluginUuid: string
 ): () => void {
   const localTerminalSessions = new Map<string, OtoolsLocalTerminalSession>()
+  const nativeListenSessions = new Map<string, OtoolsFrameNativeListenSession>()
+  const sshFrameSessions = new Map<string, OtoolsSshFrameSession>()
   const localTerminalBuffers = new Map<
     string,
     OtoolsLocalTerminalBufferedEvent[]
@@ -268,7 +338,9 @@ export function installOtoolsFrameBridge(
         request.command,
         request.payload,
         localTerminalSessions,
-        localTerminalBuffers
+        localTerminalBuffers,
+        nativeListenSessions,
+        sshFrameSessions
       )
     } catch (error) {
       response.ok = false
@@ -284,6 +356,12 @@ export function installOtoolsFrameBridge(
     for (const sessionId of [...localTerminalSessions.keys()]) {
       void disposeLocalTerminalSession(localTerminalSessions, sessionId)
     }
+    for (const uuid of [...nativeListenSessions.keys()]) {
+      void disposeFrameNativeListenSession(nativeListenSessions, uuid)
+    }
+    for (const sessionId of [...sshFrameSessions.keys()]) {
+      void disposeSshFrameSession(sshFrameSessions, sessionId)
+    }
     localTerminalBuffers.clear()
   }
 }
@@ -294,7 +372,9 @@ async function dispatchOtoolsFrameCommand(
   command: string,
   payload: unknown,
   localTerminalSessions: Map<string, OtoolsLocalTerminalSession>,
-  localTerminalBuffers: Map<string, OtoolsLocalTerminalBufferedEvent[]>
+  localTerminalBuffers: Map<string, OtoolsLocalTerminalBufferedEvent[]>,
+  nativeListenSessions: Map<string, OtoolsFrameNativeListenSession>,
+  sshFrameSessions: Map<string, OtoolsSshFrameSession>
 ): Promise<unknown> {
   switch (command) {
     case "start_local_terminal_session":
@@ -317,9 +397,133 @@ async function dispatchOtoolsFrameCommand(
         localTerminalSessions,
         localTerminalBuffers
       )
+    case "native_plugin_listen_acquire":
+      return acquireFrameNativeListen(
+        frame,
+        pluginUuid,
+        payload,
+        nativeListenSessions
+      )
+    case "native_plugin_listen_release":
+      return releaseFrameNativeListen(
+        pluginUuid,
+        payload,
+        nativeListenSessions
+      )
+    case "connect_ssh_server":
+      return connectSshServerForFrame(frame, payload, sshFrameSessions)
+    case "send_ssh_input":
+      return sendSshInputForFrame(payload)
+    case "disconnect_ssh_server":
+      return disconnectSshServerForFrame(payload, sshFrameSessions)
+    case "is_ssh_connected":
+      return getTransport().call("is_ssh_connected", asRecord(payload) ?? {})
     default:
       return dispatchOtoolsCommand(pluginUuid, command, payload)
   }
+}
+
+async function acquireFrameNativeListen(
+  frame: HTMLIFrameElement,
+  pluginUuid: string,
+  payload: unknown,
+  nativeListenSessions: Map<string, OtoolsFrameNativeListenSession>
+): Promise<Record<string, unknown>> {
+  const targetPluginUuid = resolvePayloadPluginUuid(pluginUuid, payload)
+  if (!targetPluginUuid) {
+    throw new Error("plugin uuid is required")
+  }
+
+  const existing = nativeListenSessions.get(targetPluginUuid)
+  if (existing) {
+    existing.refs += 1
+    return {
+      ok: true,
+      pluginUuid: targetPluginUuid,
+    }
+  }
+
+  const eventName = `otools-native:${targetPluginUuid}`
+  const unlisten = await getTransport().subscribe(eventName, (eventPayload) => {
+    const body = asRecord(eventPayload)
+    frame.contentWindow?.postMessage(
+      {
+        type: "otools:native-event",
+        payload: {
+          pluginUuid: targetPluginUuid,
+          topic: readStringField(body ?? {}, "topic"),
+          payload: body?.payload ?? null,
+        },
+      },
+      "*"
+    )
+  })
+
+  try {
+    await getTransport().call("native_plugin_listen_acquire", {
+      uuid: targetPluginUuid,
+      intervalMs: readOptionalIntervalMs(payload),
+    })
+  } catch (error) {
+    unlisten()
+    throw error
+  }
+
+  nativeListenSessions.set(targetPluginUuid, {
+    refs: 1,
+    unlisten,
+  })
+
+  return {
+    ok: true,
+    pluginUuid: targetPluginUuid,
+  }
+}
+
+async function releaseFrameNativeListen(
+  pluginUuid: string,
+  payload: unknown,
+  nativeListenSessions: Map<string, OtoolsFrameNativeListenSession>
+): Promise<Record<string, unknown>> {
+  const targetPluginUuid = resolvePayloadPluginUuid(pluginUuid, payload)
+  if (!targetPluginUuid) {
+    throw new Error("plugin uuid is required")
+  }
+
+  const session = nativeListenSessions.get(targetPluginUuid)
+  if (!session) {
+    return {
+      ok: true,
+      pluginUuid: targetPluginUuid,
+    }
+  }
+
+  session.refs -= 1
+  if (session.refs <= 0) {
+    await disposeFrameNativeListenSession(nativeListenSessions, targetPluginUuid)
+  }
+
+  return {
+    ok: true,
+    pluginUuid: targetPluginUuid,
+  }
+}
+
+async function disposeFrameNativeListenSession(
+  nativeListenSessions: Map<string, OtoolsFrameNativeListenSession>,
+  pluginUuid: string
+): Promise<void> {
+  const session = nativeListenSessions.get(pluginUuid)
+  if (!session) {
+    return
+  }
+  nativeListenSessions.delete(pluginUuid)
+  session.unlisten?.()
+  try {
+    await getTransport().call("native_plugin_listen_release", {
+      uuid: pluginUuid,
+    })
+  } catch {}
 }
 
 async function startLocalTerminalSession(
@@ -549,6 +753,165 @@ function pushLocalTerminalBufferedEvent(
   localTerminalBuffers.set(sessionId, buffer)
 }
 
+
+async function connectSshServerForFrame(
+  frame: HTMLIFrameElement,
+  payload: unknown,
+  sshFrameSessions: Map<string, OtoolsSshFrameSession>
+): Promise<unknown> {
+  const record = asRecord(payload) ?? {}
+  const config = asRecord(record.config) ?? record
+  const sessionId =
+    readStringField(config, "sessionId") ||
+    readStringField(config, "session_id") ||
+    readStringField(record, "sessionId") ||
+    readStringField(record, "session_id")
+  if (!sessionId) {
+    throw new Error("session_id is required")
+  }
+
+  await ensureSshFrameSubscriptions(frame, sessionId, sshFrameSessions)
+
+  try {
+    return await getTransport().call("connect_ssh_server", {
+      config: {
+        server_id:
+          readStringField(config, "serverId") ||
+          readStringField(config, "server_id"),
+        session_id: sessionId,
+        host: readStringField(config, "host"),
+        port: readNumberField(config, "port", 22),
+        username: readStringField(config, "username"),
+        auth_type:
+          readStringField(config, "authType") ||
+          readStringField(config, "auth_type") ||
+          "password",
+        password: readStringField(config, "password"),
+        private_key_path:
+          readStringField(config, "privateKeyPath") ||
+          readStringField(config, "private_key_path"),
+        passphrase: readStringField(config, "passphrase"),
+      },
+    })
+  } catch (error) {
+    postBridgeEvent(frame, SSH_CONNECTION_STATUS_EVENT, {
+      sessionId,
+      status: "error",
+    })
+    await disposeSshFrameSession(sshFrameSessions, sessionId)
+    throw error
+  }
+}
+
+async function sendSshInputForFrame(payload: unknown): Promise<void> {
+  const record = asRecord(payload) ?? {}
+  await getTransport().call("send_ssh_input", {
+    serverId:
+      readStringField(record, "serverId") ||
+      readStringField(record, "server_id"),
+    sessionId:
+      readStringField(record, "sessionId") ||
+      readStringField(record, "session_id"),
+    input: readStringField(record, "input"),
+  })
+}
+
+async function disconnectSshServerForFrame(
+  payload: unknown,
+  sshFrameSessions: Map<string, OtoolsSshFrameSession>
+): Promise<void> {
+  const record = asRecord(payload) ?? {}
+  const sessionId =
+    readStringField(record, "sessionId") ||
+    readStringField(record, "session_id")
+  await getTransport().call("disconnect_ssh_server", {
+    serverId:
+      readStringField(record, "serverId") ||
+      readStringField(record, "server_id"),
+    sessionId,
+  })
+  if (sessionId) {
+    await disposeSshFrameSession(sshFrameSessions, sessionId)
+  }
+}
+
+async function ensureSshFrameSubscriptions(
+  frame: HTMLIFrameElement,
+  sessionId: string,
+  sshFrameSessions: Map<string, OtoolsSshFrameSession>
+): Promise<void> {
+  const existing = sshFrameSessions.get(sessionId)
+  if (existing) {
+    existing.refs += 1
+    return
+  }
+
+  const session: OtoolsSshFrameSession = {
+    unlistenOutput: null,
+    unlistenStatus: null,
+    refs: 1,
+  }
+  sshFrameSessions.set(sessionId, session)
+
+  session.unlistenOutput = await getTransport().subscribe(
+    SSH_OUTPUT_EVENT,
+    (eventPayload) => {
+      const body = asRecord(eventPayload) ?? {}
+      const eventSessionId =
+        readStringField(body, "sessionId") ||
+        readStringField(body, "session_id")
+      if (eventSessionId && eventSessionId !== sessionId) return
+      postBridgeEvent(frame, SSH_OUTPUT_EVENT, {
+        sessionId: eventSessionId || sessionId,
+        output:
+          typeof body.output === "string"
+            ? body.output
+            : String(body.output ?? ""),
+      })
+    }
+  )
+
+  session.unlistenStatus = await getTransport().subscribe(
+    SSH_CONNECTION_STATUS_EVENT,
+    (eventPayload) => {
+      const body = asRecord(eventPayload) ?? {}
+      const eventSessionId =
+        readStringField(body, "sessionId") ||
+        readStringField(body, "session_id")
+      if (eventSessionId && eventSessionId !== sessionId) return
+      const status = readStringField(body, "status") || "disconnected"
+      postBridgeEvent(frame, SSH_CONNECTION_STATUS_EVENT, {
+        sessionId: eventSessionId || sessionId,
+        status,
+      })
+      if (status === "disconnected" || status === "error") {
+        void disposeSshFrameSession(sshFrameSessions, sessionId)
+      }
+    }
+  )
+}
+
+async function disposeSshFrameSession(
+  sshFrameSessions: Map<string, OtoolsSshFrameSession>,
+  sessionId: string
+): Promise<void> {
+  const session = sshFrameSessions.get(sessionId)
+  if (!session) return
+  sshFrameSessions.delete(sessionId)
+
+  const unsubscribeTasks = [session.unlistenOutput, session.unlistenStatus]
+    .filter(Boolean)
+    .map((unsubscribe) =>
+      Promise.resolve()
+        .then(() => unsubscribe?.())
+        .catch(() => {})
+    )
+
+  if (unsubscribeTasks.length > 0) {
+    await Promise.allSettled(unsubscribeTasks)
+  }
+}
+
 function postBridgeEvent(
   frame: HTMLIFrameElement,
   event: string,
@@ -604,7 +967,15 @@ export async function loadOtoolsPluginDocument(
 ): Promise<string> {
   const html = await loadPluginAssetText(plugin.uuid, plugin.entry, entryUrl)
   const inlinedHtml = await inlinePluginDocumentAssets(html, entryUrl, plugin)
-  return injectCompatBridge(inlinedHtml, entryUrl, plugin, hostInfo, options)
+  const preload = await loadOtoolsPluginPreloadScript(plugin, entryUrl)
+  return injectCompatBridge(
+    inlinedHtml,
+    entryUrl,
+    plugin,
+    hostInfo,
+    options,
+    preload
+  )
 }
 
 async function loadPluginAssetText(
@@ -626,11 +997,95 @@ async function loadPluginAssetText(
   }
 }
 
+async function loadOtoolsPluginPreloadScript(
+  plugin: OtoolsPluginInfo,
+  entryUrl: string
+): Promise<{ filename: string; source: string } | null> {
+  const candidates = []
+  const declaredPreload =
+    typeof plugin.preload === "string" ? plugin.preload.trim() : ""
+  if (declaredPreload) {
+    candidates.push(declaredPreload)
+  }
+  candidates.push("preload.js")
+
+  const seen = new Set<string>()
+  for (const candidate of candidates) {
+    const assetPath = String(candidate || "").trim()
+    const key = assetPath.toLowerCase()
+    if (!assetPath || seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+
+    const fallbackUrl = resolvePluginPreloadFallbackUrl(assetPath, entryUrl)
+    const source = await tryLoadPluginAssetText(
+      plugin.uuid,
+      assetPath,
+      fallbackUrl
+    )
+    if (source && source.trim()) {
+      return {
+        filename: assetPath,
+        source,
+      }
+    }
+  }
+
+  return null
+}
+
+async function tryLoadPluginAssetText(
+  pluginUuid: string,
+  assetPath: string,
+  fallbackUrl: string | null
+): Promise<string | null> {
+  try {
+    const asset = await getOtoolsPluginAsset(pluginUuid, assetPath)
+    return asset.text ?? decodeBase64Text(asset.dataBase64)
+  } catch {}
+
+  if (!fallbackUrl) {
+    return null
+  }
+
+  try {
+    const response = await fetch(fallbackUrl, {
+      credentials: "same-origin",
+    })
+    if (!response.ok) {
+      return null
+    }
+    return response.text()
+  } catch {
+    return null
+  }
+}
+
+function resolvePluginPreloadFallbackUrl(
+  preloadPath: string,
+  entryUrl: string
+): string | null {
+  const value = String(preloadPath || "").trim()
+  if (!value || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\")) {
+    return null
+  }
+  try {
+    return new URL(value, entryUrl).toString()
+  } catch {
+    return null
+  }
+}
+
 async function inlinePluginDocumentAssets(
   html: string,
   entryUrl: string,
   plugin: OtoolsPluginInfo
 ): Promise<string> {
+  if (!plugin.assetBaseUrl && /^(https?|data):/i.test(entryUrl)) {
+    return html
+  }
+
   const withScripts = await replaceAsync(
     html,
     /<script\b([^>]*)\bsrc=(["'])([^"']+)\2([^>]*)>\s*<\/script>/gi,
@@ -695,6 +1150,14 @@ function resolvePluginAssetPath(
 ): string | null {
   const raw = value.trim()
   if (!raw || /^(data|blob|javascript|mailto):/i.test(raw)) return null
+  if (!plugin.assetBaseUrl && /^file:/i.test(entryUrl)) {
+    try {
+      const absolute = new URL(raw, new URL(".", entryUrl))
+      return absolute.protocol === "file:" ? absolute.toString() : null
+    } catch {
+      return raw
+    }
+  }
   try {
     const absolute = new URL(raw, new URL(".", entryUrl))
     const marker = `/otools-assets/${plugin.uuid}/`
@@ -732,6 +1195,18 @@ export async function dispatchOtoolsCommand(
 ): Promise<unknown> {
   const targetPluginUuid = resolvePayloadPluginUuid(pluginUuid, payload)
 
+  if (command === "get_init_error") {
+    return null
+  }
+
+  if (DIRECT_TAURI_NOOP_COMMANDS.has(command)) {
+    return true
+  }
+
+  if (OTOOLS_POPUP_COMMANDS.has(command)) {
+    return dispatchOtoolsPopupCommand(command, payload)
+  }
+
   if (command.startsWith("plugin:remote-service|")) {
     return dispatchOtoolsRemoteServiceCommand(command, payload)
   }
@@ -742,6 +1217,29 @@ export async function dispatchOtoolsCommand(
 
   if (command.startsWith("plugin:path|")) {
     return dispatchTauriPathCommand(command, payload)
+  }
+
+  if (command.startsWith("plugin:notification|")) {
+    return dispatchTauriNotificationCommand(targetPluginUuid, command, payload)
+  }
+
+  if (command.startsWith("plugin:process|")) {
+    return dispatchTauriProcessCommand(command, payload)
+  }
+
+  if (command.startsWith("plugin:updater|")) {
+    return dispatchTauriUpdaterCommand(command)
+  }
+
+  if (command.startsWith("plugin:global-shortcut|")) {
+    return dispatchTauriGlobalShortcutCommand(command, payload)
+  }
+
+  if (command.startsWith("plugin:")) {
+    const handled = dispatchTauriPluginCompatCommand(command, payload)
+    if (handled.handled) {
+      return handled.value
+    }
   }
 
   if (STATE_GET_COMMANDS.has(command)) {
@@ -843,13 +1341,21 @@ export async function dispatchOtoolsCommand(
     if (!action) {
       throw new Error("Unsupported tools shell shortcut action")
     }
-    dispatchHostCustomEvent<OtoolsHostShellShortcutDetail>(
-      OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
-      {
+    try {
+      await getShellTransport().call("otools_emit_tools_shell_shortcut", {
         action,
-      }
-    )
-    return true
+      })
+      return true
+    } catch {
+      // Fallback for pure in-page shell when backend emit is unavailable.
+      dispatchHostCustomEvent<OtoolsHostShellShortcutDetail>(
+        OTOOLS_HOST_SHELL_SHORTCUT_EVENT,
+        {
+          action,
+        }
+      )
+      return true
+    }
   }
 
   if (OPEN_EXTERNAL_COMMANDS.has(command)) {
@@ -884,7 +1390,7 @@ export async function dispatchOtoolsCommand(
   }
 
   if (REVEAL_ITEM_COMMANDS.has(command)) {
-    const path = readStringField(payload, "path")
+    const path = readFirstPathField(payload)
     try {
       return await getTransport().call("otools_shell_show_item_in_folder", {
         path,
@@ -1008,11 +1514,15 @@ export async function dispatchOtoolsCommand(
   switch (command) {
     case "bridge_ping":
       return "invoke-ok"
+    case "otools_list_plugins":
+      return listOtoolsPluginsForBridge()
     case "otools_get_all_plugins":
-      return listOtoolsPlugins()
-    case "otools_reload_all_plugins":
+      return listOtoolsPluginsForBridge()
+    case "otools_reload_all_plugins": {
+      const plugins = await reloadOtoolsPlugins()
       window.dispatchEvent(new Event(OTOOLS_HOST_RELOAD_PLUGINS_EVENT))
-      return true
+      return plugins.map(withMenuGitPluginCompat)
+    }
     case "otools_request_app_exit":
       if (canUseLocalDesktopHost()) {
         return getShellTransport().call("otools_request_app_exit")
@@ -1400,9 +1910,19 @@ export async function dispatchOtoolsCommand(
 
   if (command === "native_plugin_invoke") {
     const native = asRecord(payload)
+    const method = native?.method ? String(native.method) : command
+    if (method === "get_init_error") {
+      return null
+    }
+    if (DIRECT_TAURI_NOOP_COMMANDS.has(method)) {
+      return true
+    }
+    if (OTOOLS_POPUP_COMMANDS.has(method)) {
+      return dispatchOtoolsPopupCommand(method, native?.payload ?? {})
+    }
     return invokeOtoolsNative(
       resolvePayloadPluginUuid(targetPluginUuid, native),
-      native?.method ? String(native.method) : command,
+      method,
       native?.payload
     )
   }
@@ -1425,14 +1945,20 @@ export async function dispatchOtoolsCommand(
     })
   }
 
-  if (
-    command === "native_plugin_listen_acquire" ||
-    command === "native_plugin_listen_release"
-  ) {
-    return {
-      ok: true,
-      pluginUuid: targetPluginUuid,
-    }
+  if (command === "native_plugin_listen_acquire") {
+    const body = asRecord(payload) ?? {}
+    const rawInterval = body.intervalMs ?? body.interval_ms
+    const intervalMs = Number(rawInterval)
+    return getTransport().call(command, {
+      uuid: targetPluginUuid,
+      intervalMs: Number.isFinite(intervalMs) ? Math.floor(intervalMs) : null,
+    })
+  }
+
+  if (command === "native_plugin_listen_release") {
+    return getTransport().call(command, {
+      uuid: targetPluginUuid,
+    })
   }
 
   try {
@@ -1470,6 +1996,13 @@ async function dispatchConfigCommand(
     default:
       return null
   }
+}
+
+async function dispatchOtoolsPopupCommand(
+  command: string,
+  payload: unknown
+): Promise<unknown> {
+  return getTransport().call(command, asRecord(payload) ?? {})
 }
 
 async function dispatchTauriAppCommand(
@@ -1536,6 +2069,119 @@ async function dispatchTauriPathCommand(
       return isAbsoluteHostPath(readStringField(payload, "path"))
     default:
       return ""
+  }
+}
+
+async function dispatchTauriNotificationCommand(
+  pluginUuid: string,
+  command: string,
+  payload: unknown
+): Promise<unknown> {
+  switch (command) {
+    case "plugin:notification|is_permission_granted":
+      if (typeof Notification === "undefined") {
+        return true
+      }
+      return Notification.permission === "granted"
+    case "plugin:notification|notify":
+    case "plugin:notification|send":
+    case "plugin:notification|show": {
+      const detail = normalizeNotificationDetail(pluginUuid, payload)
+      dispatchHostCustomEvent<OtoolsHostNotificationDetail>(
+        OTOOLS_HOST_NOTIFICATION_EVENT,
+        detail
+      )
+      await sendSystemNotification(detail.title || "OTools", detail.body || "")
+      return
+    }
+    case "plugin:notification|get_pending":
+    case "plugin:notification|get_active":
+    case "plugin:notification|listChannels":
+      return []
+    case "plugin:notification|register_action_types":
+    case "plugin:notification|cancel":
+    case "plugin:notification|remove_active":
+    case "plugin:notification|create_channel":
+    case "plugin:notification|delete_channel":
+      return
+    default:
+      return
+  }
+}
+
+async function dispatchTauriProcessCommand(
+  command: string,
+  payload: unknown
+): Promise<unknown> {
+  switch (command) {
+    case "plugin:process|exit":
+      if (readOptionalNumberValue(asRecord(payload)?.code) === 0) {
+        return
+      }
+      return
+    case "plugin:process|restart":
+      window.dispatchEvent(new Event(OTOOLS_HOST_RELOAD_PLUGINS_EVENT))
+      return
+    default:
+      return
+  }
+}
+
+async function dispatchTauriUpdaterCommand(command: string): Promise<unknown> {
+  switch (command) {
+    case "plugin:updater|check":
+      return null
+    case "plugin:updater|download":
+    case "plugin:updater|install":
+    case "plugin:updater|download_and_install":
+      return
+    default:
+      return null
+  }
+}
+
+async function dispatchTauriGlobalShortcutCommand(
+  command: string,
+  payload: unknown
+): Promise<unknown> {
+  switch (command) {
+    case "plugin:global-shortcut|is_registered":
+      void payload
+      return false
+    case "plugin:global-shortcut|register":
+    case "plugin:global-shortcut|unregister":
+    case "plugin:global-shortcut|unregister_all":
+      return
+    default:
+      return
+  }
+}
+
+function dispatchTauriPluginCompatCommand(
+  command: string,
+  payload: unknown
+): { handled: boolean; value?: unknown } {
+  if (command === "plugin:resources|close") {
+    return { handled: true }
+  }
+
+  const matched = command.match(/^plugin:([^|]+)\|(.+)$/)
+  if (!matched) {
+    return { handled: false }
+  }
+
+  const plugin = matched[1]
+  const action = matched[2]
+  if (!plugin || !action) {
+    return { handled: false }
+  }
+
+  switch (action) {
+    case "check_permissions":
+    case "request_permissions":
+      return { handled: true, value: [] }
+    default:
+      return { handled: false }
   }
 }
 
@@ -1815,14 +2461,19 @@ function injectCompatBridge(
       resolvedTheme?: string | null
     } | null
     windowLabel?: string | null
-  }
+  },
+  preload?: { filename: string; source: string } | null
 ): string {
   const baseHref = new URL(".", entryUrl).toString()
   const script = `<script id="codeg-otools-bridge">${buildCompatBridgeScript(plugin, hostInfo, options)}</script>`
+  const noderScript = `<script id="codeg-otools-noder" src="/otools/noder-runtime.js"></script>`
+  const preloadScript = preload
+    ? `<script id="codeg-otools-plugin-preload">${buildPluginPreloadScript(preload.source, preload.filename)}</script>`
+    : ""
   const base = `<base href="${escapeHtml(baseHref)}" />`
   const pluginUuid = plugin.uuid
   const marker = `<meta name="codeg-otools-plugin" content="${escapeHtml(pluginUuid)}" />`
-  const injected = `${base}${marker}${script}`
+  const injected = `${base}${marker}${script}${noderScript}${preloadScript}`
 
   if (/<head(\s[^>]*)?>/i.test(html)) {
     return html.replace(/<head(\s[^>]*)?>/i, (match) => `${match}${injected}`)
@@ -1836,6 +2487,77 @@ function injectCompatBridge(
   }
 
   return `<!doctype html><html><head>${injected}</head><body>${html}</body></html>`
+}
+
+function buildPluginPreloadScript(source: string, filename: string): string {
+  return `;(${runOtoolsPluginPreload.toString()})(${serializeScriptArg(source)}, ${serializeScriptArg(filename)});`
+}
+
+function serializeScriptArg(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029")
+}
+
+function runOtoolsPluginPreload(source: string, filename: string) {
+  const safeFilename = String(filename || "preload.js")
+  const sourceUrl = safeFilename.replace(/[\r\n]/g, " ")
+  const module = { exports: {} }
+  const dirname = sourceUrl.includes("/")
+    ? sourceUrl.slice(0, sourceUrl.lastIndexOf("/"))
+    : ""
+  const requireCompat = (specifier) => {
+    const noder = window.__OTOOLS_NODER__
+    if (noder && typeof noder.require === "function") {
+      return noder.require(specifier)
+    }
+    throw new Error(`OTools preload require is not available: ${specifier}`)
+  }
+
+  if (
+    window.__OTOOLS_NODER__ &&
+    typeof window.__OTOOLS_NODER__.runEntryModule === "function"
+  ) {
+    window.__OTOOLS_NODER__.runEntryModule(
+      safeFilename,
+      function (exports, require, module, __filename, __dirname, process, Buffer, global) {
+        return new Function(
+          "exports",
+          "require",
+          "module",
+          "__filename",
+          "__dirname",
+          "process",
+          "Buffer",
+          "global",
+          `${source}\n//# sourceURL=${sourceUrl}`
+        )(exports, require, module, __filename, __dirname, process, Buffer, global)
+      }
+    )
+    return
+  }
+
+  new Function(
+    "exports",
+    "require",
+    "module",
+    "__filename",
+    "__dirname",
+    "process",
+    "Buffer",
+    "global",
+    `${source}\n//# sourceURL=${sourceUrl}`
+  )(
+    module.exports,
+    requireCompat,
+    module,
+    safeFilename,
+    dirname,
+    null,
+    window.Buffer,
+    window
+  )
 }
 
 function buildCompatBridgeScript(
@@ -1869,12 +2591,22 @@ function buildCompatBridgeScript(
     pluginUuid: plugin.uuid,
     hostFileAuthToken: getActiveRemoteToken() || getCodegToken(),
     hostFileBaseUrl: getServerBaseUrl(),
+    noderBridgeAuthToken: getActiveRemoteToken() || getCodegToken(),
+    noderBridgeBaseUrl: resolveNoderBridgeBaseUrl(),
     useTauriAssetProtocol:
       isDesktop() && getActiveRemoteConnectionId() === null,
     initialLocaleSync: options?.initialLocaleSync ?? null,
     initialThemeSync: options?.initialThemeSync ?? null,
     windowLabel: String(options?.windowLabel || "").trim() || WINDOW_LABEL,
   })});`
+}
+
+function resolveNoderBridgeBaseUrl(): string {
+  if (isDesktop() && getActiveRemoteConnectionId() === null) {
+    return ""
+  }
+  const baseUrl = getServerBaseUrl().replace(/\/+$/, "")
+  return baseUrl ? `${baseUrl}/api/otools-noder` : "/api/otools-noder"
 }
 
 function otoolsCompatBootstrap(config: {
@@ -1898,6 +2630,8 @@ function otoolsCompatBootstrap(config: {
   pluginUuid: string
   hostFileAuthToken?: string
   hostFileBaseUrl?: string
+  noderBridgeAuthToken?: string
+  noderBridgeBaseUrl?: string
   useTauriAssetProtocol?: boolean
   windowLabel: string
 }) {
@@ -1929,11 +2663,16 @@ function otoolsCompatBootstrap(config: {
   const transformCallbacks = new Map()
   const eventListeners = new Map()
   const nativeListeners = new Set()
+  const nativeListenerIntervals = new Map()
   const nativeListenerPluginRefs = new Map()
   let requestSeq = 0
   let callbackSeq = 0
   let eventSeq = 0
   let polling = false
+  const defaultNativePollIntervalMs = 200
+  const minNativePollIntervalMs = 50
+  const maxNativePollIntervalMs = 10000
+  const tauriSerializeToIpcKey = "__TAURI_TO_IPC_KEY__"
   const crossWindowEventBusName = "codeg:otools:event-bus"
   const crossWindowEventSourceId = `${windowLabel}:${Math.random()
     .toString(36)
@@ -1953,6 +2692,8 @@ function otoolsCompatBootstrap(config: {
     currentFolderPath: String(config.currentFolderPath || "").trim(),
     currentBrowserUrl:
       String(config.currentBrowserUrl || "").trim() || window.location.href,
+    noderBridgeAuthToken: String(config.noderBridgeAuthToken || "").trim(),
+    noderBridgeBaseUrl: String(config.noderBridgeBaseUrl || "").trim(),
     paths: config.paths && typeof config.paths === "object" ? config.paths : {},
   }
 
@@ -2205,14 +2946,53 @@ function otoolsCompatBootstrap(config: {
     return null
   }
 
+  const serializeIpcValue = (value, seen) => {
+    if (value === null || value === undefined || typeof value !== "object") {
+      return value
+    }
+
+    const serializer =
+      typeof value[tauriSerializeToIpcKey] === "function"
+        ? value[tauriSerializeToIpcKey]
+        : typeof value.toJSON === "function"
+          ? value.toJSON
+          : null
+    if (serializer) {
+      return serializeIpcValue(serializer.call(value), seen)
+    }
+
+    const refs = seen || new WeakSet()
+    if (refs.has(value)) {
+      return null
+    }
+    refs.add(value)
+
+    if (Array.isArray(value)) {
+      const list = value.map((item) => serializeIpcValue(item, refs))
+      refs.delete(value)
+      return list
+    }
+
+    const record = {}
+    for (const key of Object.keys(value)) {
+      const serialized = serializeIpcValue(value[key], refs)
+      if (serialized !== undefined) {
+        record[key] = serialized
+      }
+    }
+    refs.delete(value)
+    return record
+  }
+
   const postInvoke = (command, payload) => {
     const id = `${pluginUuid || "otools"}:${++requestSeq}`
+    const serializedPayload = serializeIpcValue(payload ?? {})
     const directInvoke =
       typeof window.__OToolsBridgePostInvoke === "function"
         ? window.__OToolsBridgePostInvoke
         : null
     if (directInvoke) {
-      return Promise.resolve(directInvoke(command, payload ?? {}))
+      return Promise.resolve(directInvoke(command, serializedPayload))
     }
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject })
@@ -2221,11 +3001,111 @@ function otoolsCompatBootstrap(config: {
           id,
           type: "otools:invoke",
           command,
-          payload: payload ?? {},
+          payload: serializedPayload,
         },
         "*"
       )
     })
+  }
+
+  const resolvePopupUrl = (path) => {
+    const raw = toStringSafe(path).trim()
+    if (!raw) {
+      return ""
+    }
+    try {
+      return new URL(raw).toString()
+    } catch {
+      return new URL(raw, window.location.origin).toString()
+    }
+  }
+
+  const openOtoolsPopup = (path, command, payloadValue) => {
+    const url = resolvePopupUrl(path)
+    if (!url) {
+      return
+    }
+
+    const popupId = `otools-popup-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`
+    const root = document.createElement("div")
+    root.dataset.otoolsPopupId = popupId
+    root.style.cssText = [
+      "position:fixed",
+      "inset:0",
+      "z-index:2147483647",
+      "display:flex",
+      "align-items:center",
+      "justify-content:center",
+      "padding:24px",
+      "background:rgba(15,23,42,0.45)",
+      "backdrop-filter:blur(6px)",
+    ].join(";")
+
+    const panel = document.createElement("div")
+    panel.style.cssText = [
+      "position:relative",
+      "display:flex",
+      "flex-direction:column",
+      "width:min(1120px,100%)",
+      "height:min(760px,100%)",
+      "overflow:hidden",
+      "border-radius:16px",
+      "border:1px solid rgba(148,163,184,0.28)",
+      "background:#fff",
+      "box-shadow:0 24px 80px rgba(15,23,42,0.28)",
+    ].join(";")
+
+    const closeButton = document.createElement("button")
+    closeButton.type = "button"
+    closeButton.textContent = "Close"
+    closeButton.style.cssText = [
+      "position:absolute",
+      "top:12px",
+      "right:12px",
+      "z-index:2",
+      "border:0",
+      "border-radius:999px",
+      "padding:8px 12px",
+      "background:rgba(15,23,42,0.72)",
+      "color:#fff",
+      "cursor:pointer",
+    ].join(";")
+    closeButton.addEventListener("click", () => root.remove())
+
+    const iframe = document.createElement("iframe")
+    iframe.dataset.otoolsPopupId = popupId
+    iframe.dataset.otoolsPopupTarget = toStringSafe(command)
+    iframe.src = url
+    iframe.setAttribute(
+      "sandbox",
+      "allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+    )
+    iframe.style.cssText = [
+      "width:100%",
+      "height:100%",
+      "border:0",
+      "background:#fff",
+    ].join(";")
+    if (payloadValue !== undefined) {
+      iframe.dataset.otoolsPopupPayload = JSON.stringify(payloadValue)
+    }
+
+    panel.append(closeButton, iframe)
+    root.append(panel)
+    document.body.append(root)
+  }
+
+  const invokeOtoolsPopupCommand = async (command, payloadValue) => {
+    const result = await postInvoke(command, payloadValue ?? {})
+    const record = result && typeof result === "object" ? result : null
+    const path = toStringSafe(record && record.path).trim()
+    if (path) {
+      openOtoolsPopup(path, command, payloadValue)
+      return
+    }
+    return result
   }
 
   window.addEventListener("message", (event) => {
@@ -2235,6 +3115,10 @@ function otoolsCompatBootstrap(config: {
         event: toStringSafe(message.event).trim(),
         payload: message.payload ?? null,
       })
+      return
+    }
+    if (message && message.type === "otools:native-event") {
+      dispatchNativeEnvelope(message.payload)
       return
     }
     if (!message || message.type !== "otools:invoke-result") {
@@ -2262,7 +3146,34 @@ function otoolsCompatBootstrap(config: {
   }
 
   const unregisterCallback = (id) => {
-    transformCallbacks.delete(Number(id))
+    const callbackId = parseCallbackChannelId(id)
+    if (Number.isFinite(callbackId)) {
+      transformCallbacks.delete(callbackId)
+    }
+  }
+
+  const parseCallbackChannelId = (value) => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value
+    }
+    if (typeof value === "string") {
+      const text = value.trim()
+      if (!text) return Number.NaN
+      const direct = Number(text)
+      if (Number.isFinite(direct)) return direct
+      const matched = text.match(/(?:__CHANNEL__|__TAURI_CHANNEL__):(\d+)$/)
+      if (matched) return Number(matched[1])
+    }
+    if (value && typeof value === "object") {
+      const serialized =
+        typeof value.toJSON === "function"
+          ? value.toJSON()
+          : typeof value.__TAURI_TO_IPC_KEY__ === "function"
+            ? value.__TAURI_TO_IPC_KEY__()
+            : null
+      return parseCallbackChannelId(serialized)
+    }
+    return Number.NaN
   }
 
   const fireTransformCallback = (id, payload) => {
@@ -2344,6 +3255,7 @@ function otoolsCompatBootstrap(config: {
 
     for (const listener of eventListeners.values()) {
       if (listener.event !== name) continue
+      if (listener.target && !matchesEventTarget(listener.target)) continue
       fireTransformCallback(listener.handlerId, data)
     }
   }
@@ -2421,6 +3333,28 @@ function otoolsCompatBootstrap(config: {
     } else {
       nativeListenerPluginRefs.delete(targetUuid)
     }
+  }
+
+  const normalizeNativePollInterval = (options) => {
+    const value =
+      options && typeof options === "object" && options.intervalMs != null
+        ? Number(options.intervalMs)
+        : defaultNativePollIntervalMs
+    if (!Number.isFinite(value)) {
+      return defaultNativePollIntervalMs
+    }
+    return Math.min(
+      maxNativePollIntervalMs,
+      Math.max(minNativePollIntervalMs, Math.floor(value))
+    )
+  }
+
+  const currentNativePollInterval = () => {
+    let interval = defaultNativePollIntervalMs
+    for (const value of nativeListenerIntervals.values()) {
+      interval = Math.min(interval, value)
+    }
+    return interval
   }
 
   const handleCrossWindowEventRecord = (record) => {
@@ -2516,13 +3450,15 @@ function otoolsCompatBootstrap(config: {
         }
       } catch {}
 
-      await new Promise((resolve) => window.setTimeout(resolve, 600))
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, currentNativePollInterval())
+      )
     }
 
     polling = false
   }
 
-  const acquireNativeListener = async (uuid, handler, filter) => {
+  const acquireNativeListener = async (uuid, handler, options, filter) => {
     const targetUuid = resolvePluginUuid(uuid)
     if (typeof handler !== "function") {
       throw new Error("listenNative handler required")
@@ -2535,18 +3471,42 @@ function otoolsCompatBootstrap(config: {
       handler(event)
     }
     nativeListeners.add(wrappedHandler)
-    retainNativePluginPoll(targetUuid)
-    void pollNativeLoop()
+    const intervalMs = normalizeNativePollInterval(options)
+    nativeListenerIntervals.set(wrappedHandler, intervalMs)
+    let useHostListen = false
+    if (targetUuid) {
+      try {
+        await postInvoke("native_plugin_listen_acquire", {
+          uuid: targetUuid,
+          intervalMs,
+        })
+        useHostListen = true
+      } catch {
+        retainNativePluginPoll(targetUuid)
+        void pollNativeLoop()
+      }
+    } else {
+      void pollNativeLoop()
+    }
 
     return async () => {
       nativeListeners.delete(wrappedHandler)
-      releaseNativePluginPoll(targetUuid)
+      nativeListenerIntervals.delete(wrappedHandler)
+      if (useHostListen) {
+        await postInvoke("native_plugin_listen_release", {
+          uuid: targetUuid,
+        }).catch(() => {})
+      } else {
+        releaseNativePluginPoll(targetUuid)
+      }
     }
   }
 
   const registerEventListener = (payload) => {
     const event = toStringSafe(payload && payload.event).trim()
-    const handlerId = Number(payload && payload.handler)
+    const handlerId = parseCallbackChannelId(
+      payload && (payload.handler || payload.channelId)
+    )
     if (!event || !Number.isFinite(handlerId)) {
       throw new Error("plugin:event|listen requires event and handler")
     }
@@ -2558,19 +3518,33 @@ function otoolsCompatBootstrap(config: {
       handlerId,
       id,
       nativePluginUuid,
+      target: normalizeEventTarget(payload && payload.target),
     })
     void pollNativeLoop()
     return id
   }
 
   const unregisterEventListener = (payload) => {
-    const eventId = Number(payload && payload.eventId)
+    const eventId = Number(payload && (payload.eventId || payload.id))
     if (Number.isFinite(eventId)) {
       const listener = eventListeners.get(eventId)
       if (listener) {
         releaseNativePluginPoll(listener.nativePluginUuid)
         eventListeners.delete(eventId)
       }
+      return
+    }
+
+    const handlerId = parseCallbackChannelId(payload && payload.channelId)
+    if (!Number.isFinite(handlerId)) {
+      return
+    }
+    for (const [id, listener] of eventListeners.entries()) {
+      if (listener.handlerId !== handlerId) {
+        continue
+      }
+      releaseNativePluginPoll(listener.nativePluginUuid)
+      eventListeners.delete(id)
     }
   }
 
@@ -2595,11 +3569,70 @@ function otoolsCompatBootstrap(config: {
   }
 
   const tauriInvoke = async (command, payload) => {
+    if (command === "plugin:resources|close") {
+      return
+    }
+
+    if (command === "get_init_error") {
+      return null
+    }
+
+    if (DIRECT_TAURI_NOOP_COMMANDS.has(command)) {
+      return true
+    }
+
+    if (OTOOLS_POPUP_COMMANDS.has(command)) {
+      return invokeOtoolsPopupCommand(command, payload)
+    }
+
+    const legacyPluginCommand =
+      typeof command === "string"
+        ? command.match(/^plugin:([^|]+)\|(.+)$/)
+        : null
+    if (legacyPluginCommand) {
+      const action = legacyPluginCommand[2]
+      switch (action) {
+        case "check_permissions":
+        case "request_permissions":
+          return []
+        case "register_listener":
+        case "registerListener":
+          return registerEventListener(payload)
+        case "remove_listener":
+        case "removeListener":
+          unregisterEventListener(payload)
+          return
+        default:
+          break
+      }
+    }
+
     switch (command) {
+      case "native_plugin_invoke": {
+        const method = toStringSafe(payload && payload.method).trim()
+        if (method === "get_init_error") {
+          return null
+        }
+        if (DIRECT_TAURI_NOOP_COMMANDS.has(method)) {
+          return true
+        }
+        if (OTOOLS_POPUP_COMMANDS.has(method)) {
+          return invokeOtoolsPopupCommand(method, payload?.payload ?? {})
+        }
+        return postInvoke(command, payload ?? {})
+      }
       case "native_plugin_listen_acquire": {
         const targetUuid = retainNativePluginPoll(
           payload && (payload.uuid || payload.pluginUuid || payload.plugin)
         )
+        if (targetUuid) {
+          try {
+            releaseNativePluginPoll(targetUuid)
+            return await postInvoke(command, payload ?? {})
+          } catch {
+            retainNativePluginPoll(targetUuid)
+          }
+        }
         void pollNativeLoop()
         return {
           ok: true,
@@ -2607,9 +3640,13 @@ function otoolsCompatBootstrap(config: {
         }
       }
       case "native_plugin_listen_release":
-        releaseNativePluginPoll(
-          payload && (payload.uuid || payload.pluginUuid || payload.plugin)
-        )
+        try {
+          return await postInvoke(command, payload ?? {})
+        } catch {
+          releaseNativePluginPoll(
+            payload && (payload.uuid || payload.pluginUuid || payload.plugin)
+          )
+        }
         return {
           ok: true,
           pluginUuid,
@@ -2628,6 +3665,637 @@ function otoolsCompatBootstrap(config: {
     }
   }
 
+  const installOtoolsBrowserBehaviorBridge = () => {
+    if (window.__CODEG_OTOOLS_BROWSER_BEHAVIOR_BRIDGE__) {
+      return
+    }
+    window.__CODEG_OTOOLS_BROWSER_BEHAVIOR_BRIDGE__ = true
+
+    const log = (message) => {
+      tauriInvoke("tools_webview_log", { message: toStringSafe(message) }).catch(
+        () => {
+          try {
+            console.debug("[OTools][Bridge]", message)
+          } catch {}
+        }
+      )
+    }
+    const isEditableKeyboardTarget = (target) => {
+      if (!(target instanceof HTMLElement)) {
+        return false
+      }
+      if (target.isContentEditable) {
+        return true
+      }
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
+        return true
+      }
+      return Boolean(
+        target.closest(".el-input, .el-textarea, [contenteditable='true']")
+      )
+    }
+    const emitToolsShellShortcut = (action) => {
+      tauriInvoke("otools_emit_tools_shell_shortcut", { action }).catch(() => {})
+    }
+    const originalWindowOpen = window.open
+    window.open = function (url, target, features) {
+      try {
+        const opened = originalWindowOpen
+          ? originalWindowOpen.call(window, url, target, features)
+          : null
+        if (opened) {
+          return opened
+        }
+      } catch (error) {
+        log(`window.open blocked: ${error}`)
+      }
+      try {
+        const href = toStringSafe(url).trim()
+        if (
+          href &&
+          href !== "about:blank" &&
+          !href.toLowerCase().startsWith("javascript:")
+        ) {
+          window.location.href = href
+        }
+      } catch (error) {
+        log(`window.open fallback failed: ${error}`)
+      }
+      return null
+    }
+    const shouldIgnoreAnchorHref = (href) => {
+      const value = toStringSafe(href).trim()
+      if (!value) return true
+      const lower = value.toLowerCase()
+      return (
+        lower === "#" ||
+        lower.startsWith("javascript:") ||
+        lower.startsWith("about:") ||
+        lower.startsWith("mailto:") ||
+        lower.startsWith("tel:")
+      )
+    }
+    document.addEventListener(
+      "click",
+      (event) => {
+        try {
+          if (event.defaultPrevented || event.button !== 0) return
+          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+            return
+          }
+          const target = event.target
+          if (!target || typeof target.closest !== "function") return
+          const anchor = target.closest("a")
+          if (!anchor) return
+          const href = anchor.getAttribute("href") || ""
+          if (shouldIgnoreAnchorHref(href)) return
+          const resolved = anchor.href || href
+          if (shouldIgnoreAnchorHref(resolved)) return
+          const targetAttr = (
+            anchor.getAttribute("target") || ""
+          ).toLowerCase()
+          if (targetAttr && targetAttr !== "_self") {
+            event.preventDefault()
+            window.location.href = resolved
+          }
+        } catch (error) {
+          log(`anchor click intercept failed: ${error}`)
+        }
+      },
+      true
+    )
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        try {
+          const hasPrimaryModifier = event.ctrlKey || event.metaKey
+          if (!hasPrimaryModifier || event.altKey) return
+          if (!event.shiftKey && toStringSafe(event.key).toLowerCase() === "w") {
+            event.preventDefault()
+            emitToolsShellShortcut("closeActiveTab")
+            return
+          }
+          if (event.shiftKey || isEditableKeyboardTarget(event.target)) return
+          if (event.key === "ArrowLeft") {
+            event.preventDefault()
+            emitToolsShellShortcut("activatePrevTab")
+            return
+          }
+          if (event.key === "ArrowRight") {
+            event.preventDefault()
+            emitToolsShellShortcut("activateNextTab")
+          }
+        } catch (error) {
+          log(`keyboard shortcut intercept failed: ${error}`)
+        }
+      },
+      true
+    )
+  }
+
+  const installClipboardCompat = () => {
+    const existing = navigator.clipboard || {}
+    const originalWriteText =
+      typeof existing.writeText === "function"
+        ? existing.writeText.bind(existing)
+        : null
+    const originalWrite =
+      typeof existing.write === "function" ? existing.write.bind(existing) : null
+    const originalReadText =
+      typeof existing.readText === "function"
+        ? existing.readText.bind(existing)
+        : null
+
+    const arrayBufferToBase64 = (buffer) => {
+      const bytes = new Uint8Array(buffer)
+      let binary = ""
+      const chunkSize = 0x8000
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+      }
+      return btoa(binary)
+    }
+    const blobToDataUrl = (blob) => {
+      if (typeof FileReader === "undefined") {
+        return blob
+          .arrayBuffer()
+          .then(
+            (buffer) =>
+              `data:${blob.type || "application/octet-stream"};base64,${arrayBufferToBase64(buffer)}`
+          )
+      }
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onerror = () => reject(reader.error)
+        reader.onload = () => resolve(toStringSafe(reader.result))
+        reader.readAsDataURL(blob)
+      })
+    }
+    const writeTextCompat = async (text) => {
+      const value = toStringSafe(text)
+      try {
+        if (originalWriteText) {
+          await originalWriteText(value)
+          return
+        }
+      } catch {}
+      await tauriInvoke("__otools_copy_text", { text: value })
+    }
+    const writeCompat = async (items) => {
+      let originalError = null
+      try {
+        if (originalWrite) {
+          await originalWrite(items)
+          return
+        }
+      } catch (error) {
+        originalError = error
+      }
+
+      const list = Array.from(items || [])
+      for (const item of list) {
+        const types = Array.isArray(item?.types) ? item.types : []
+        const textType = types.find((type) => /^text\//i.test(type))
+        if (textType && typeof item.getType === "function") {
+          const blob = await item.getType(textType)
+          await writeTextCompat(await blob.text())
+          return
+        }
+
+        const imageType = types.find((type) => /^image\//i.test(type))
+        if (imageType && typeof item.getType === "function") {
+          const blob = await item.getType(imageType)
+          await tauriInvoke("otools_copy_image", {
+            image: { dataUrl: await blobToDataUrl(blob) },
+          })
+          return
+        }
+      }
+
+      throw originalError || new Error("Unsupported clipboard data")
+    }
+    const clipboard = Object.assign(Object.create(existing), {
+      readText: originalReadText || (() => Promise.resolve("")),
+      write: writeCompat,
+      writeText: writeTextCompat,
+    })
+
+    try {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: clipboard,
+      })
+    } catch {
+      try {
+        navigator.clipboard = clipboard
+      } catch {}
+    }
+  }
+
+  const installHostFileSystemAccessPolyfill = () => {
+    if (window.__CODEG_OTOOLS_FS_ACCESS_POLYFILL__) {
+      return
+    }
+    window.__CODEG_OTOOLS_FS_ACCESS_POLYFILL__ = true
+
+    const textEncoder = new TextEncoder()
+    const bytesToBase64 = (bytes) => {
+      let binary = ""
+      const chunkSize = 0x8000
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+      }
+      return btoa(binary)
+    }
+    const base64ToBytes = (base64) => {
+      const binary = atob(toStringSafe(base64))
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i)
+      }
+      return bytes
+    }
+    const joinPath = (base, name) => {
+      const parent = toStringSafe(base).replace(/[\\/]+$/, "")
+      const safeName = toStringSafe(name).replace(/[\\/]+/g, "")
+      const sep = parent.includes("\\") ? "\\" : "/"
+      return parent ? `${parent}${sep}${safeName}` : safeName
+    }
+    const normalizeAcceptFilters = (options) => {
+      const filters = []
+      const types = Array.isArray(options?.types) ? options.types : []
+      for (const type of types) {
+        const accept = type && typeof type === "object" ? type.accept : null
+        if (!accept || typeof accept !== "object") {
+          continue
+        }
+        const extensions = []
+        for (const list of Object.values(accept)) {
+          if (!Array.isArray(list)) continue
+          for (const item of list) {
+            const ext = toStringSafe(item).trim().replace(/^\./, "")
+            if (ext) extensions.push(ext)
+          }
+        }
+        if (extensions.length) {
+          filters.push({
+            name: toStringSafe(type.description).trim() || "Files",
+            extensions,
+          })
+        }
+      }
+      const accept = toStringSafe(options?.accept).trim()
+      if (accept && !filters.length) {
+        const extensions = accept
+          .split(",")
+          .map((item) => item.trim().replace(/^\./, ""))
+          .filter((item) => item && !item.includes("/"))
+        if (extensions.length) {
+          filters.push({ name: "Files", extensions })
+        }
+      }
+      return filters
+    }
+    const normalizePickOptions = (options) => {
+      const filters = normalizeAcceptFilters(options)
+      return {
+        directory:
+          toStringSafe(options?.directory).trim() ||
+          toStringSafe(options?.startIn).trim() ||
+          undefined,
+        filters: filters.length ? filters : undefined,
+        multiple: options?.multiple === true,
+        suggestedName: toStringSafe(options?.suggestedName).trim() || undefined,
+        title: toStringSafe(options?.title).trim() || undefined,
+      }
+    }
+    const readFilePayload = async (path) =>
+      tauriInvoke("tools_webview_read_file", { path: toStringSafe(path) })
+    const createFileFromMeta = async (meta) => {
+      const record = meta && typeof meta === "object" ? meta : {}
+      const payload = record.dataBase64 ? record : await readFilePayload(record.path)
+      const bytes = base64ToBytes(payload?.dataBase64 || "")
+      return new File([bytes], toStringSafe(payload?.name) || "file", {
+        lastModified: Number(payload?.lastModified) || Date.now(),
+        type: toStringSafe(payload?.mime),
+      })
+    }
+    const createWritable = async (meta, options = {}) => {
+      let buffer = new Uint8Array(0)
+      let size = 0
+      let position = 0
+      const path = toStringSafe(meta?.path)
+      if (options.keepExistingData && path) {
+        try {
+          const payload = await readFilePayload(path)
+          buffer = base64ToBytes(payload?.dataBase64 || "")
+          size = buffer.length
+          position = size
+        } catch {}
+      }
+      const ensureCapacity = (targetSize) => {
+        if (targetSize <= buffer.length) return
+        const next = new Uint8Array(Math.max(targetSize, buffer.length * 2, 1024))
+        next.set(buffer.subarray(0, size))
+        buffer = next
+      }
+      const writeBytes = (bytes, offset) => {
+        const start =
+          typeof offset === "number" && Number.isFinite(offset)
+            ? Math.max(0, offset)
+            : position
+        const end = start + bytes.length
+        ensureCapacity(end)
+        buffer.set(bytes, start)
+        size = Math.max(size, end)
+        position = end
+      }
+      const toBytes = async (data) => {
+        if (data instanceof Uint8Array) return data
+        if (data instanceof ArrayBuffer) return new Uint8Array(data)
+        if (ArrayBuffer.isView(data)) {
+          return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+        }
+        if (typeof Blob !== "undefined" && data instanceof Blob) {
+          return new Uint8Array(await data.arrayBuffer())
+        }
+        if (typeof data === "string") return textEncoder.encode(data)
+        return textEncoder.encode(toStringSafe(data))
+      }
+      const write = async (data) => {
+        if (data && typeof data === "object" && "type" in data) {
+          if (data.type === "seek") {
+            position = Math.max(0, Number(data.position || 0))
+            return
+          }
+          if (data.type === "truncate") {
+            size = Math.max(0, Number(data.size || 0))
+            ensureCapacity(size)
+            position = Math.min(position, size)
+            return
+          }
+          if (data.type === "write") {
+            writeBytes(await toBytes(data.data ?? ""), data.position)
+            return
+          }
+        }
+        writeBytes(await toBytes(data))
+      }
+      const close = async () => {
+        await tauriInvoke("tools_webview_write_file", {
+          path,
+          dataBase64: bytesToBase64(buffer.subarray(0, size)),
+        })
+      }
+      const stream = new WritableStream({
+        async write(chunk) {
+          await write(chunk)
+        },
+        async close() {
+          await close()
+        },
+      })
+      stream.write = write
+      stream.seek = async (nextPosition) => {
+        position = Math.max(0, Number(nextPosition || 0))
+      }
+      stream.truncate = async (nextSize) => {
+        size = Math.max(0, Number(nextSize || 0))
+        ensureCapacity(size)
+        position = Math.min(position, size)
+      }
+      stream.close = close
+      return stream
+    }
+
+    class OtoolsFileSystemHandle {
+      constructor(kind, name, path) {
+        this.kind = kind
+        this.name = toStringSafe(name)
+        this._otools_path = toStringSafe(path)
+      }
+
+      async isSameEntry(other) {
+        return Boolean(other && other._otools_path === this._otools_path)
+      }
+    }
+    class OtoolsFileSystemFileHandle extends OtoolsFileSystemHandle {
+      constructor(meta) {
+        const record = meta && typeof meta === "object" ? meta : {}
+        super("file", record.name || "file", record.path || "")
+        this._otools_meta = { ...record, path: this._otools_path }
+      }
+
+      async getFile() {
+        return createFileFromMeta(this._otools_meta)
+      }
+
+      async createWritable(options = {}) {
+        return createWritable(this._otools_meta, options)
+      }
+    }
+    class OtoolsFileSystemDirectoryHandle extends OtoolsFileSystemHandle {
+      constructor(name, path) {
+        super("directory", name || "folder", path || "")
+      }
+
+      async getFileHandle(name, options = {}) {
+        const path = joinPath(this._otools_path, name)
+        if (options.create === true) {
+          await tauriInvoke("tools_webview_touch_file", { path })
+        } else {
+          await tauriInvoke("tools_webview_file_meta", { path })
+        }
+        return new OtoolsFileSystemFileHandle({ path, name: toStringSafe(name) })
+      }
+
+      async getDirectoryHandle(name, options = {}) {
+        const path = joinPath(this._otools_path, name)
+        if (options.create === true) {
+          await tauriInvoke("tools_webview_create_dir", { path })
+        } else {
+          await tauriInvoke("tools_webview_list_dir", { path })
+        }
+        return new OtoolsFileSystemDirectoryHandle(name, path)
+      }
+
+      async removeEntry(name, options = {}) {
+        await tauriInvoke("tools_webview_remove_entry", {
+          path: joinPath(this._otools_path, name),
+          recursive: options.recursive === true,
+        })
+      }
+
+      async resolve(possibleDescendant) {
+        const target = toStringSafe(possibleDescendant?._otools_path)
+        if (!target || !target.startsWith(this._otools_path)) return null
+        const relative = target.slice(this._otools_path.length).replace(/^[\\/]+/, "")
+        return relative ? relative.split(/[\\/]+/) : []
+      }
+
+      async *entries() {
+        const items = await tauriInvoke("tools_webview_list_dir", {
+          path: this._otools_path,
+        })
+        for (const entry of Array.isArray(items) ? items : []) {
+          const handle =
+            entry.kind === "directory"
+              ? new OtoolsFileSystemDirectoryHandle(entry.name, entry.path)
+              : new OtoolsFileSystemFileHandle(entry)
+          yield [entry.name, handle]
+        }
+      }
+
+      async *keys() {
+        for await (const [name] of this.entries()) yield name
+      }
+
+      async *values() {
+        for await (const [, handle] of this.entries()) yield handle
+      }
+
+      [Symbol.asyncIterator]() {
+        return this.entries()
+      }
+    }
+
+    const defineGlobal = (key, value) => {
+      try {
+        Object.defineProperty(window, key, {
+          configurable: true,
+          value,
+          writable: true,
+        })
+      } catch {
+        window[key] = value
+      }
+    }
+    defineGlobal("FileSystemHandle", OtoolsFileSystemHandle)
+    defineGlobal("FileSystemFileHandle", OtoolsFileSystemFileHandle)
+    defineGlobal("FileSystemDirectoryHandle", OtoolsFileSystemDirectoryHandle)
+    defineGlobal("FileSystemWritableFileStream", WritableStream)
+
+    const showOpenFilePicker = async (options = {}) => {
+      const payload = normalizePickOptions(options)
+      payload.multiple = options.multiple === true
+      const result = await tauriInvoke("tools_webview_pick_files", {
+        options: payload,
+      })
+      return (Array.isArray(result) ? result : []).map(
+        (meta) => new OtoolsFileSystemFileHandle(meta)
+      )
+    }
+    const showSaveFilePicker = async (options = {}) => {
+      const result = await tauriInvoke("tools_webview_pick_save_path", {
+        options: normalizePickOptions(options),
+      })
+      if (!result || !result.path) {
+        throw new DOMException("Save cancelled", "AbortError")
+      }
+      return new OtoolsFileSystemFileHandle(result)
+    }
+    const showDirectoryPicker = async (options = {}) => {
+      const result = await tauriInvoke("tools_webview_pick_folder", {
+        options: normalizePickOptions(options),
+      })
+      if (!result || !result.path) {
+        throw new DOMException("Directory selection cancelled", "AbortError")
+      }
+      return new OtoolsFileSystemDirectoryHandle(result.name, result.path)
+    }
+    const chooseFileSystemEntries = async (options = {}) => {
+      if (options.type === "save-file") return showSaveFilePicker(options)
+      if (options.type === "open-directory") return showDirectoryPicker(options)
+      const handles = await showOpenFilePicker({
+        ...options,
+        multiple: options.multiple === true,
+      })
+      return options.multiple === true ? handles : handles[0]
+    }
+    defineGlobal("showOpenFilePicker", showOpenFilePicker)
+    defineGlobal("showSaveFilePicker", showSaveFilePicker)
+    defineGlobal("showDirectoryPicker", showDirectoryPicker)
+    defineGlobal("chooseFileSystemEntries", chooseFileSystemEntries)
+
+    try {
+      const storage = navigator.storage || {}
+      Object.defineProperty(navigator, "storage", {
+        configurable: true,
+        value: storage,
+      })
+      Object.defineProperty(storage, "getDirectory", {
+        configurable: true,
+        value: async () => {
+          const key = "__codeg_otools_fs_root"
+          const stored = localStorage.getItem(key)
+          if (stored) {
+            const value = JSON.parse(stored)
+            return new OtoolsFileSystemDirectoryHandle(value.name, value.path)
+          }
+          const handle = await showDirectoryPicker({ title: "Select storage root" })
+          localStorage.setItem(
+            key,
+            JSON.stringify({ name: handle.name, path: handle._otools_path })
+          )
+          return handle
+        },
+      })
+    } catch {}
+
+    try {
+      const permissions = navigator.permissions || {}
+      Object.defineProperty(navigator, "permissions", {
+        configurable: true,
+        value: permissions,
+      })
+      const originalQuery =
+        typeof permissions.query === "function"
+          ? permissions.query.bind(permissions)
+          : null
+      Object.defineProperty(permissions, "query", {
+        configurable: true,
+        value: (descriptor) => {
+          const name = toStringSafe(descriptor?.name)
+          if (name === "file-system-read" || name === "file-system-write") {
+            return Promise.resolve({ onchange: null, state: "granted" })
+          }
+          return originalQuery
+            ? originalQuery(descriptor)
+            : Promise.resolve({ onchange: null, state: "prompt" })
+        },
+      })
+    } catch {}
+
+    const originalInputClick = HTMLInputElement.prototype.click
+    HTMLInputElement.prototype.click = function (...args) {
+      if (this.type !== "file" || this.__codegOtoolsPickingFile) {
+        return originalInputClick.apply(this, args)
+      }
+      this.__codegOtoolsPickingFile = true
+      showOpenFilePicker({
+        accept: this.accept,
+        multiple: this.multiple,
+      })
+        .then(async (handles) => {
+          if (typeof DataTransfer === "undefined") return
+          const dataTransfer = new DataTransfer()
+          for (const handle of handles) {
+            dataTransfer.items.add(await handle.getFile())
+          }
+          Object.defineProperty(this, "files", {
+            configurable: true,
+            value: dataTransfer.files,
+          })
+          this.dispatchEvent(new Event("input", { bubbles: true }))
+          this.dispatchEvent(new Event("change", { bubbles: true }))
+        })
+        .finally(() => {
+          this.__codegOtoolsPickingFile = false
+        })
+      return undefined
+    }
+  }
+
   const dialog = {
     open(options) {
       return tauriInvoke("plugin:dialog|open", { options: options || {} })
@@ -2636,38 +4304,46 @@ function otoolsCompatBootstrap(config: {
       return tauriInvoke("plugin:dialog|save", { options: options || {} })
     },
     message(messageText, options) {
+      const okButtonLabel =
+        typeof options === "string"
+          ? undefined
+          : options && (options.okLabel ?? options.buttons?.ok)
       return tauriInvoke("plugin:dialog|message", {
         message: toStringSafe(messageText),
         title: typeof options === "string" ? options : options && options.title,
         kind: typeof options === "string" ? undefined : options && options.kind,
-        okLabel:
-          typeof options === "string" ? undefined : options && options.okLabel,
+        okLabel: okButtonLabel,
+        okButtonLabel,
       })
     },
     confirm(messageText, options) {
+      const okButtonLabel =
+        typeof options === "string" ? undefined : options && options.okLabel
+      const cancelButtonLabel =
+        typeof options === "string" ? undefined : options && options.cancelLabel
       return tauriInvoke("plugin:dialog|confirm", {
         message: toStringSafe(messageText),
         title: typeof options === "string" ? options : options && options.title,
         kind: typeof options === "string" ? undefined : options && options.kind,
-        okLabel:
-          typeof options === "string" ? undefined : options && options.okLabel,
-        cancelLabel:
-          typeof options === "string"
-            ? undefined
-            : options && options.cancelLabel,
+        okLabel: okButtonLabel,
+        cancelLabel: cancelButtonLabel,
+        okButtonLabel,
+        cancelButtonLabel,
       })
     },
     ask(messageText, options) {
+      const yesButtonLabel =
+        typeof options === "string" ? undefined : options && options.okLabel
+      const noButtonLabel =
+        typeof options === "string" ? undefined : options && options.cancelLabel
       return tauriInvoke("plugin:dialog|ask", {
         message: toStringSafe(messageText),
         title: typeof options === "string" ? options : options && options.title,
         kind: typeof options === "string" ? undefined : options && options.kind,
-        okLabel:
-          typeof options === "string" ? undefined : options && options.okLabel,
-        cancelLabel:
-          typeof options === "string"
-            ? undefined
-            : options && options.cancelLabel,
+        okLabel: yesButtonLabel,
+        cancelLabel: noButtonLabel,
+        yesButtonLabel,
+        noButtonLabel,
       })
     },
   }
@@ -2707,13 +4383,78 @@ function otoolsCompatBootstrap(config: {
     })
   }
 
+  const permissions = Array.isArray(env.pluginPermissions)
+    ? env.pluginPermissions.map((item) => toStringSafe(item).trim()).filter(Boolean)
+    : []
+  const fileIconCache =
+    window.__OToolsFileIconCache &&
+    typeof window.__OToolsFileIconCache === "object"
+      ? window.__OToolsFileIconCache
+      : {}
+  window.__OToolsFileIconCache = fileIconCache
+  if (!Array.isArray(window.__OToolsCopiedFiles)) {
+    window.__OToolsCopiedFiles = []
+  }
+  const permissionSet = new Set(permissions.map((item) => item.toLowerCase()))
+  const hasPermission = (name) => {
+    const key = toStringSafe(name).trim().toLowerCase()
+    return !key || permissionSet.has(key) || permissionSet.has("*")
+  }
+  const nodeRequire = (specifier) => {
+    throw new Error(
+      `Node require is unavailable in the codeg-plus OTools web runtime: ${toStringSafe(
+        specifier
+      )}`
+    )
+  }
+  nodeRequire.resolve = (specifier) => toStringSafe(specifier)
+  nodeRequire.cache = {}
+  const createRequire = () => nodeRequire
+  const tauriPathInternals = {
+    sep: currentPlatform === "windows" ? "\\" : "/",
+    delimiter: currentPlatform === "windows" ? ";" : ":",
+  }
+  const runtimeInfo = {
+    isNoder: false,
+    isNativeTauri: config.useTauriAssetProtocol === true,
+    hasHostBridge: true,
+    platform: currentPlatform,
+    appName: toStringSafe(env.appName || "OTools"),
+    appVersion: toStringSafe(env.appVersion || ""),
+    pluginUuid: resolvePluginUuid(pluginUuid),
+    env,
+    permissionsRestricted: permissions.length > 0,
+    permissions,
+    hasPermission,
+    versions: {
+      app: toStringSafe(env.appVersion || ""),
+      tauri: "2",
+      otools: toStringSafe(env.appVersion || ""),
+      codeg: toStringSafe(env.appVersion || ""),
+    },
+    dialog,
+    shell,
+    fs: null,
+    path: tauriPathInternals,
+    os: null,
+    process: null,
+    childProcess: null,
+    require: nodeRequire,
+    createRequire,
+    builtinModules: [],
+  }
+
   const baseApi = {
     dialog,
-    runtime: {
-      dialog,
-      shell,
-    },
+    runtime: runtimeInfo,
     shell,
+    fs: null,
+    path: tauriPathInternals,
+    os: null,
+    process: null,
+    childProcess: null,
+    require: nodeRequire,
+    createRequire,
     listHostDir(path) {
       const target = toStringSafe(path).trim()
       if (!target) {
@@ -2871,13 +4612,13 @@ function otoolsCompatBootstrap(config: {
       return resolvePluginUuid(pluginUuid)
     },
     getNativeId() {
-      return env.nativeId
+      return toStringSafe(env.nativeId || "")
     },
     getAppName() {
-      return env.appName
+      return toStringSafe(env.appName || "OTools")
     },
     getAppVersion() {
-      return env.appVersion
+      return toStringSafe(env.appVersion || "")
     },
     getPath(name) {
       const key = toStringSafe(name)
@@ -2888,7 +4629,16 @@ function otoolsCompatBootstrap(config: {
       if (!target) {
         return ""
       }
-      void tauriInvoke("otools_get_file_icon", { path: target }).catch(() => {})
+      if (fileIconCache[target]) {
+        return fileIconCache[target]
+      }
+      void tauriInvoke("otools_get_file_icon", { path: target })
+        .then((icon) => {
+          if (icon) {
+            fileIconCache[target] = icon
+          }
+        })
+        .catch(() => {})
       return ""
     },
     readCurrentFolderPath() {
@@ -2957,12 +4707,12 @@ function otoolsCompatBootstrap(config: {
         uuid: resolvePluginUuid(uuid),
       })
     },
-    listenNative(handler) {
-      return acquireNativeListener(pluginUuid, handler)
+    listenNative(handler, options) {
+      return acquireNativeListener(pluginUuid, handler, options)
     },
-    listenNativePlugin(uuid, handler) {
+    listenNativePlugin(uuid, handler, options) {
       const targetUuid = resolvePluginUuid(uuid)
-      return acquireNativeListener(targetUuid, handler, (event) => {
+      return acquireNativeListener(targetUuid, handler, options, (event) => {
         const eventPluginUuid =
           event &&
           event.payload &&
@@ -3160,13 +4910,12 @@ function otoolsCompatBootstrap(config: {
   })
 
   window.__OToolsEnv = env
+  window.__OTOOLS_REMOTE_SERVICE__ = config.useTauriAssetProtocol !== true
+  window.__TAURI_REMOTE_SERVICE__ = config.useTauriAssetProtocol !== true
   window.__TAURI_INTERNALS__ = window.__TAURI_INTERNALS__ || {}
   window.__TAURI_INTERNALS__.plugins = window.__TAURI_INTERNALS__.plugins || {}
   window.__TAURI_INTERNALS__.plugins.path =
-    window.__TAURI_INTERNALS__.plugins.path || {
-      sep: currentPlatform === "windows" ? "\\" : "/",
-      delimiter: currentPlatform === "windows" ? ";" : ":",
-    }
+    window.__TAURI_INTERNALS__.plugins.path || tauriPathInternals
   window.__TAURI_INTERNALS__.invoke = tauriInvoke
   window.__TAURI_INTERNALS__.transformCallback = transformCallback
   window.__TAURI_INTERNALS__.unregisterCallback = unregisterCallback
@@ -3174,6 +4923,1313 @@ function otoolsCompatBootstrap(config: {
   window.__TAURI_INTERNALS__.metadata = {
     currentWebview: { label: windowLabel },
     currentWindow: { label: windowLabel },
+  }
+  const localTauriEvents = new Set(["tauri://created", "tauri://error"])
+  class OtoolsCompatChannel {
+    constructor(onmessage) {
+      this.onmessage = typeof onmessage === "function" ? onmessage : () => {}
+      this.id = transformCallback((message) => this.onmessage(message))
+    }
+
+    cleanupCallback() {
+      unregisterCallback(this.id)
+    }
+
+    [tauriSerializeToIpcKey]() {
+      return `__CHANNEL__:${this.id}`
+    }
+
+    toJSON() {
+      return this[tauriSerializeToIpcKey]()
+    }
+  }
+  class OtoolsCompatResource {
+    constructor(rid) {
+      this.rid = rid
+    }
+
+    close() {
+      return tauriInvoke("plugin:resources|close", { rid: this.rid })
+    }
+  }
+  class OtoolsCompatPluginListener {
+    constructor(plugin, event, channelId) {
+      this.plugin = toStringSafe(plugin)
+      this.event = toStringSafe(event)
+      this.channelId = channelId
+    }
+
+    unregister() {
+      return tauriInvoke(`plugin:${this.plugin}|remove_listener`, {
+        event: this.event,
+        channelId: this.channelId,
+      })
+    }
+  }
+  const addPluginListener = async (plugin, event, cb) => {
+    const handler = new OtoolsCompatChannel(cb)
+    try {
+      await tauriInvoke(`plugin:${plugin}|register_listener`, {
+        event,
+        handler,
+      })
+    } catch {
+      await tauriInvoke(`plugin:${plugin}|registerListener`, {
+        event,
+        handler,
+      })
+    }
+    return new OtoolsCompatPluginListener(plugin, event, handler.id)
+  }
+  class OtoolsCompatLogicalSize {
+    constructor(...args) {
+      this.type = "Logical"
+      const source = args.length === 1 ? args[0] : null
+      const value = source && source.Logical ? source.Logical : source
+      this.width = args.length === 1 ? value.width : args[0]
+      this.height = args.length === 1 ? value.height : args[1]
+    }
+
+    toPhysical(scaleFactor) {
+      return new OtoolsCompatPhysicalSize(
+        this.width * scaleFactor,
+        this.height * scaleFactor
+      )
+    }
+
+    [tauriSerializeToIpcKey]() {
+      return {
+        width: this.width,
+        height: this.height,
+      }
+    }
+
+    toJSON() {
+      return this[tauriSerializeToIpcKey]()
+    }
+  }
+  class OtoolsCompatPhysicalSize {
+    constructor(...args) {
+      this.type = "Physical"
+      const source = args.length === 1 ? args[0] : null
+      const value = source && source.Physical ? source.Physical : source
+      this.width = args.length === 1 ? value.width : args[0]
+      this.height = args.length === 1 ? value.height : args[1]
+    }
+
+    toLogical(scaleFactor) {
+      return new OtoolsCompatLogicalSize(
+        this.width / scaleFactor,
+        this.height / scaleFactor
+      )
+    }
+
+    [tauriSerializeToIpcKey]() {
+      return {
+        width: this.width,
+        height: this.height,
+      }
+    }
+
+    toJSON() {
+      return this[tauriSerializeToIpcKey]()
+    }
+  }
+  class OtoolsCompatSize {
+    constructor(size) {
+      if (size && size.Logical) {
+        this.size = new OtoolsCompatLogicalSize(size)
+      } else if (size && size.Physical) {
+        this.size = new OtoolsCompatPhysicalSize(size)
+      } else {
+        this.size = size
+      }
+    }
+
+    toLogical(scaleFactor) {
+      return this.size instanceof OtoolsCompatLogicalSize
+        ? this.size
+        : this.size.toLogical(scaleFactor)
+    }
+
+    toPhysical(scaleFactor) {
+      return this.size instanceof OtoolsCompatPhysicalSize
+        ? this.size
+        : this.size.toPhysical(scaleFactor)
+    }
+
+    [tauriSerializeToIpcKey]() {
+      return {
+        [this.size.type]: {
+          width: this.size.width,
+          height: this.size.height,
+        },
+      }
+    }
+
+    toJSON() {
+      return this[tauriSerializeToIpcKey]()
+    }
+  }
+  class OtoolsCompatLogicalPosition {
+    constructor(...args) {
+      this.type = "Logical"
+      const source = args.length === 1 ? args[0] : null
+      const value = source && source.Logical ? source.Logical : source
+      this.x = args.length === 1 ? value.x : args[0]
+      this.y = args.length === 1 ? value.y : args[1]
+    }
+
+    toPhysical(scaleFactor) {
+      return new OtoolsCompatPhysicalPosition(
+        this.x * scaleFactor,
+        this.y * scaleFactor
+      )
+    }
+
+    [tauriSerializeToIpcKey]() {
+      return {
+        x: this.x,
+        y: this.y,
+      }
+    }
+
+    toJSON() {
+      return this[tauriSerializeToIpcKey]()
+    }
+  }
+  class OtoolsCompatPhysicalPosition {
+    constructor(...args) {
+      this.type = "Physical"
+      const source = args.length === 1 ? args[0] : null
+      const value = source && source.Physical ? source.Physical : source
+      this.x = args.length === 1 ? value.x : args[0]
+      this.y = args.length === 1 ? value.y : args[1]
+    }
+
+    toLogical(scaleFactor) {
+      return new OtoolsCompatLogicalPosition(
+        this.x / scaleFactor,
+        this.y / scaleFactor
+      )
+    }
+
+    [tauriSerializeToIpcKey]() {
+      return {
+        x: this.x,
+        y: this.y,
+      }
+    }
+
+    toJSON() {
+      return this[tauriSerializeToIpcKey]()
+    }
+  }
+  class OtoolsCompatPosition {
+    constructor(position) {
+      if (position && position.Logical) {
+        this.position = new OtoolsCompatLogicalPosition(position)
+      } else if (position && position.Physical) {
+        this.position = new OtoolsCompatPhysicalPosition(position)
+      } else {
+        this.position = position
+      }
+    }
+
+    toLogical(scaleFactor) {
+      return this.position instanceof OtoolsCompatLogicalPosition
+        ? this.position
+        : this.position.toLogical(scaleFactor)
+    }
+
+    toPhysical(scaleFactor) {
+      return this.position instanceof OtoolsCompatPhysicalPosition
+        ? this.position
+        : this.position.toPhysical(scaleFactor)
+    }
+
+    [tauriSerializeToIpcKey]() {
+      return {
+        [this.position.type]: {
+          x: this.position.x,
+          y: this.position.y,
+        },
+      }
+    }
+
+    toJSON() {
+      return this[tauriSerializeToIpcKey]()
+    }
+  }
+  function buildLabelPayload(label, value) {
+    const payload = { label: toStringSafe(label || windowLabel) }
+    if (arguments.length >= 2) {
+      payload.value = value
+    }
+    return payload
+  }
+  function shouldCreateTauriHandle(options) {
+    return !(options && typeof options === "object" && options.skip)
+  }
+  function buildTauriCreateOptions(label, options) {
+    const createOptions =
+      options && typeof options === "object" ? { ...options } : {}
+    if (
+      createOptions.parent &&
+      typeof createOptions.parent === "object" &&
+      "label" in createOptions.parent
+    ) {
+      createOptions.parent = createOptions.parent.label
+    }
+    createOptions.label = toStringSafe(label || windowLabel)
+    return { options: createOptions }
+  }
+  function readTauriHandleLabel(item) {
+    if (typeof item === "string") return item
+    if (item && typeof item === "object" && typeof item.label === "string") {
+      return item.label
+    }
+    return windowLabel
+  }
+  class OtoolsCompatWindow {
+    constructor(label, options = {}) {
+      this.label = toStringSafe(label || windowLabel)
+      this.listeners = Object.create(null)
+      this.targetKind = "Window"
+      if (shouldCreateTauriHandle(options)) {
+        this.createPromise = tauriInvoke(
+          "plugin:window|create",
+          buildTauriCreateOptions(this.label, options)
+        )
+          .then(() => this.emit("tauri://created"))
+          .catch((error) => this.emit("tauri://error", error))
+      }
+    }
+
+    static async getByLabel(label) {
+      const windows = await OtoolsCompatWindow.getAll()
+      return windows.find((item) => item.label === label) || null
+    }
+
+    static async getAll() {
+      const items = await tauriInvoke("plugin:window|get_all_windows", {})
+      if (Array.isArray(items) && items.length) {
+        return items.map(
+          (item) => new OtoolsCompatWindow(readTauriHandleLabel(item), { skip: true })
+        )
+      }
+      return [new OtoolsCompatWindow(windowLabel, { skip: true })]
+    }
+
+    static getCurrent() {
+      return new OtoolsCompatWindow(windowLabel, { skip: true })
+    }
+
+    static async getFocusedWindow() {
+      for (const item of await OtoolsCompatWindow.getAll()) {
+        if (await item.isFocused()) {
+          return item
+        }
+      }
+      return null
+    }
+
+    _emitLocalTauriEvent(event, payloadValue) {
+      for (const handler of [...(this.listeners[event] || [])]) {
+        handler({
+          event,
+          id: -1,
+          payload: payloadValue,
+        })
+      }
+    }
+
+    _handleTauriEvent(event, handler) {
+      if (!localTauriEvents.has(event)) {
+        return false
+      }
+      if (!(event in this.listeners)) {
+        this.listeners[event] = [handler]
+      } else {
+        this.listeners[event].push(handler)
+      }
+      return true
+    }
+
+    listen(event, handler, options) {
+      if (this._handleTauriEvent(event, handler)) {
+        return Promise.resolve(() => {
+          const listeners = this.listeners[event] || []
+          listeners.splice(listeners.indexOf(handler), 1)
+        })
+      }
+      return window.__TAURI__.event.listen(event, handler, {
+        ...(options || {}),
+        target: { kind: this.targetKind || "Window", label: this.label },
+      })
+    }
+
+    once(event, handler, options) {
+      if (localTauriEvents.has(event)) {
+        let unlisten = null
+        const onceHandler = (payloadValue) => {
+          if (unlisten) {
+            unlisten()
+          }
+          handler(payloadValue)
+        }
+        unlisten = () => {
+          const listeners = this.listeners[event] || []
+          listeners.splice(listeners.indexOf(onceHandler), 1)
+        }
+        this._handleTauriEvent(event, onceHandler)
+        return Promise.resolve(unlisten)
+      }
+      return window.__TAURI__.event.once(event, handler, {
+        ...(options || {}),
+        target: { kind: this.targetKind || "Window", label: this.label },
+      })
+    }
+
+    emit(event, payloadValue) {
+      if (localTauriEvents.has(event)) {
+        this._emitLocalTauriEvent(event, payloadValue)
+        return Promise.resolve()
+      }
+      return window.__TAURI__.event.emit(event, payloadValue)
+    }
+
+    emitTo(target, event, payloadValue) {
+      if (localTauriEvents.has(event)) {
+        this._emitLocalTauriEvent(event, payloadValue)
+        return Promise.resolve()
+      }
+      return window.__TAURI__.event.emitTo(target, event, payloadValue)
+    }
+
+    close() {
+      return tauriInvoke("plugin:window|close", buildLabelPayload(this.label))
+    }
+
+    destroy() {
+      return tauriInvoke("plugin:window|destroy", buildLabelPayload(this.label))
+    }
+
+    show() {
+      return tauriInvoke("plugin:window|show", buildLabelPayload(this.label))
+    }
+
+    hide() {
+      return tauriInvoke("plugin:window|hide", buildLabelPayload(this.label))
+    }
+
+    minimize() {
+      return tauriInvoke("plugin:window|minimize", buildLabelPayload(this.label))
+    }
+
+    unminimize() {
+      return tauriInvoke(
+        "plugin:window|unminimize",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    maximize() {
+      return tauriInvoke("plugin:window|maximize", buildLabelPayload(this.label))
+    }
+
+    unmaximize() {
+      return tauriInvoke(
+        "plugin:window|unmaximize",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    toggleMaximize() {
+      return tauriInvoke(
+        "plugin:window|toggle_maximize",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    isFocused() {
+      return tauriInvoke("plugin:window|is_focused", buildLabelPayload(this.label))
+    }
+
+    isVisible() {
+      return tauriInvoke("plugin:window|is_visible", buildLabelPayload(this.label))
+    }
+
+    isEnabled() {
+      return tauriInvoke("plugin:window|is_enabled", buildLabelPayload(this.label))
+    }
+
+    isFullscreen() {
+      return tauriInvoke(
+        "plugin:window|is_fullscreen",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    isMaximized() {
+      return tauriInvoke(
+        "plugin:window|is_maximized",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    isMinimized() {
+      return tauriInvoke(
+        "plugin:window|is_minimized",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    isDecorated() {
+      return tauriInvoke(
+        "plugin:window|is_decorated",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    isResizable() {
+      return tauriInvoke(
+        "plugin:window|is_resizable",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    isMaximizable() {
+      return tauriInvoke(
+        "plugin:window|is_maximizable",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    isMinimizable() {
+      return tauriInvoke(
+        "plugin:window|is_minimizable",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    isClosable() {
+      return tauriInvoke(
+        "plugin:window|is_closable",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    isAlwaysOnTop() {
+      return tauriInvoke(
+        "plugin:window|is_always_on_top",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    scaleFactor() {
+      return tauriInvoke("plugin:window|scale_factor", buildLabelPayload(this.label))
+    }
+
+    innerPosition() {
+      return tauriInvoke(
+        "plugin:window|inner_position",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    outerPosition() {
+      return tauriInvoke(
+        "plugin:window|outer_position",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    innerSize() {
+      return tauriInvoke("plugin:window|inner_size", buildLabelPayload(this.label))
+    }
+
+    outerSize() {
+      return tauriInvoke("plugin:window|outer_size", buildLabelPayload(this.label))
+    }
+
+    title() {
+      return tauriInvoke("plugin:window|title", buildLabelPayload(this.label))
+    }
+
+    theme() {
+      return tauriInvoke("plugin:window|theme", buildLabelPayload(this.label))
+    }
+
+    center() {
+      return tauriInvoke("plugin:window|center", buildLabelPayload(this.label))
+    }
+
+    setFocus() {
+      return tauriInvoke("plugin:window|set_focus", buildLabelPayload(this.label))
+    }
+
+    setTitle(value) {
+      return tauriInvoke(
+        "plugin:window|set_title",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setResizable(value) {
+      return tauriInvoke(
+        "plugin:window|set_resizable",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setEnabled(value) {
+      return tauriInvoke(
+        "plugin:window|set_enabled",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setMaximizable(value) {
+      return tauriInvoke(
+        "plugin:window|set_maximizable",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setMinimizable(value) {
+      return tauriInvoke(
+        "plugin:window|set_minimizable",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setClosable(value) {
+      return tauriInvoke(
+        "plugin:window|set_closable",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setSize(value) {
+      return tauriInvoke(
+        "plugin:window|set_size",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setMinSize(value) {
+      return tauriInvoke(
+        "plugin:window|set_min_size",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setMaxSize(value) {
+      return tauriInvoke(
+        "plugin:window|set_max_size",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setSizeConstraints(value) {
+      return tauriInvoke(
+        "plugin:window|set_size_constraints",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setPosition(value) {
+      return tauriInvoke(
+        "plugin:window|set_position",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setFullscreen(value) {
+      return tauriInvoke(
+        "plugin:window|set_fullscreen",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setSimpleFullscreen(value) {
+      return tauriInvoke(
+        "plugin:window|set_simple_fullscreen",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setAlwaysOnTop(value) {
+      return tauriInvoke(
+        "plugin:window|set_always_on_top",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setAlwaysOnBottom(value) {
+      return tauriInvoke(
+        "plugin:window|set_always_on_bottom",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setVisibleOnAllWorkspaces(value) {
+      return tauriInvoke(
+        "plugin:window|set_visible_on_all_workspaces",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setDecorations(value) {
+      return tauriInvoke(
+        "plugin:window|set_decorations",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setShadow(value) {
+      return tauriInvoke(
+        "plugin:window|set_shadow",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setContentProtected(value) {
+      return tauriInvoke(
+        "plugin:window|set_content_protected",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setFocusable(value) {
+      return tauriInvoke(
+        "plugin:window|set_focusable",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setSkipTaskbar(value) {
+      return tauriInvoke(
+        "plugin:window|set_skip_taskbar",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setIgnoreCursorEvents(value) {
+      return tauriInvoke(
+        "plugin:window|set_ignore_cursor_events",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setBackgroundColor(value) {
+      return tauriInvoke(
+        "plugin:window|set_background_color",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setTheme(value) {
+      return tauriInvoke(
+        "plugin:window|set_theme",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    requestUserAttention(value) {
+      return tauriInvoke(
+        "plugin:window|request_user_attention",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    startDragging() {
+      return tauriInvoke(
+        "plugin:window|start_dragging",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    startResizeDragging(value) {
+      return tauriInvoke(
+        "plugin:window|start_resize_dragging",
+        buildLabelPayload(this.label, value)
+      )
+    }
+  }
+  class OtoolsCompatWebview extends OtoolsCompatWindow {
+    constructor(windowHandle, label, options) {
+      const targetWindow =
+        windowHandle && typeof windowHandle === "object"
+          ? windowHandle
+          : new OtoolsCompatWindow(windowLabel, { skip: true })
+      const webviewLabel =
+        typeof label === "string"
+          ? label
+          : typeof windowHandle === "string"
+            ? windowHandle
+            : windowLabel
+      const createOptions = typeof label === "string" ? options : label
+      super(webviewLabel, { skip: true })
+      this.window = targetWindow
+      this.targetKind = "Webview"
+      if (shouldCreateTauriHandle(createOptions)) {
+        this.createPromise = tauriInvoke("plugin:webview|create_webview", {
+          windowLabel: toStringSafe(targetWindow.label || windowLabel),
+          ...buildTauriCreateOptions(this.label, createOptions),
+        })
+          .then(() => this.emit("tauri://created"))
+          .catch((error) => this.emit("tauri://error", error))
+      }
+    }
+
+    static async getByLabel(label) {
+      const webviews = await OtoolsCompatWebview.getAll()
+      return webviews.find((item) => item.label === label) || null
+    }
+
+    static getCurrent() {
+      return new OtoolsCompatWebview(
+        new OtoolsCompatWindow(windowLabel, { skip: true }),
+        windowLabel,
+        { skip: true }
+      )
+    }
+
+    static async getAll() {
+      const items = await tauriInvoke("plugin:webview|get_all_webviews", {})
+      if (Array.isArray(items) && items.length) {
+        return items.map((item) => {
+          const record = item && typeof item === "object" ? item : {}
+          return new OtoolsCompatWebview(
+            new OtoolsCompatWindow(record.windowLabel || windowLabel, {
+              skip: true,
+            }),
+            readTauriHandleLabel(item),
+            { skip: true }
+          )
+        })
+      }
+      return [OtoolsCompatWebview.getCurrent()]
+    }
+
+    position() {
+      return tauriInvoke(
+        "plugin:webview|webview_position",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    size() {
+      return tauriInvoke(
+        "plugin:webview|webview_size",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    setPosition(value) {
+      return tauriInvoke(
+        "plugin:webview|set_webview_position",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setSize(value) {
+      return tauriInvoke(
+        "plugin:webview|set_webview_size",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setFocus() {
+      return tauriInvoke(
+        "plugin:webview|set_webview_focus",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    close() {
+      return tauriInvoke(
+        "plugin:webview|webview_close",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    hide() {
+      return tauriInvoke(
+        "plugin:webview|webview_hide",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    show() {
+      return tauriInvoke(
+        "plugin:webview|webview_show",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    setAutoResize(value) {
+      return tauriInvoke(
+        "plugin:webview|set_webview_auto_resize",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    setZoom(value) {
+      return tauriInvoke(
+        "plugin:webview|set_webview_zoom",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    reparent(value) {
+      return tauriInvoke(
+        "plugin:webview|reparent",
+        buildLabelPayload(this.label, value)
+      )
+    }
+
+    clearAllBrowsingData() {
+      return tauriInvoke(
+        "plugin:webview|clear_all_browsing_data",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    setBackgroundColor(value) {
+      return tauriInvoke(
+        "plugin:webview|set_webview_background_color",
+        buildLabelPayload(this.label, value)
+      )
+    }
+  }
+  class OtoolsCompatWebviewWindow extends OtoolsCompatWindow {
+    constructor(label, options = {}) {
+      super(label, { skip: true })
+      this.targetKind = "WebviewWindow"
+      if (shouldCreateTauriHandle(options)) {
+        this.createPromise = tauriInvoke(
+          "plugin:webview|create_webview_window",
+          buildTauriCreateOptions(this.label, options)
+        )
+          .then(() => this.emit("tauri://created"))
+          .catch((error) => this.emit("tauri://error", error))
+      }
+    }
+
+    static async getByLabel(label) {
+      const windows = await OtoolsCompatWebviewWindow.getAll()
+      return windows.find((item) => item.label === label) || null
+    }
+
+    static getCurrent() {
+      return new OtoolsCompatWebviewWindow(windowLabel, { skip: true })
+    }
+
+    static async getAll() {
+      const items = await tauriInvoke("plugin:window|get_all_windows", {})
+      if (Array.isArray(items) && items.length) {
+        return items.map(
+          (item) =>
+            new OtoolsCompatWebviewWindow(readTauriHandleLabel(item), {
+              skip: true,
+            })
+        )
+      }
+      return [OtoolsCompatWebviewWindow.getCurrent()]
+    }
+
+    position() {
+      return tauriInvoke(
+        "plugin:webview|webview_position",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    size() {
+      return tauriInvoke(
+        "plugin:webview|webview_size",
+        buildLabelPayload(this.label)
+      )
+    }
+
+    setBackgroundColor(value) {
+      return tauriInvoke(
+        "plugin:window|set_background_color",
+        buildLabelPayload(this.label, value)
+      ).then(() =>
+        tauriInvoke(
+          "plugin:webview|set_webview_background_color",
+          buildLabelPayload(this.label, value)
+        )
+      )
+    }
+  }
+  const currentWindowHandle = new OtoolsCompatWindow(windowLabel, { skip: true })
+  const currentWebviewHandle = new OtoolsCompatWebview(
+    currentWindowHandle,
+    windowLabel,
+    { skip: true }
+  )
+  const currentWebviewWindowHandle = new OtoolsCompatWebviewWindow(windowLabel, {
+    skip: true,
+  })
+  const tauriEventConstants = {
+    WINDOW_RESIZED: "tauri://resize",
+    WINDOW_MOVED: "tauri://move",
+    WINDOW_CLOSE_REQUESTED: "tauri://close-requested",
+    WINDOW_DESTROYED: "tauri://destroyed",
+    WINDOW_FOCUS: "tauri://focus",
+    WINDOW_BLUR: "tauri://blur",
+    WINDOW_SCALE_FACTOR_CHANGED: "tauri://scale-change",
+    WINDOW_THEME_CHANGED: "tauri://theme-changed",
+    WINDOW_CREATED: "tauri://window-created",
+    WEBVIEW_CREATED: "tauri://webview-created",
+    DRAG_ENTER: "tauri://drag-enter",
+    DRAG_OVER: "tauri://drag-over",
+    DRAG_DROP: "tauri://drag-drop",
+    DRAG_LEAVE: "tauri://drag-leave",
+  }
+  const bundleType = {
+    Nsis: "nsis",
+    Msi: "msi",
+    Deb: "deb",
+    Rpm: "rpm",
+    AppImage: "appimage",
+    App: "app",
+  }
+  const baseDirectory = {
+    1: "Audio",
+    2: "Cache",
+    3: "Config",
+    4: "Data",
+    5: "LocalData",
+    6: "Document",
+    7: "Download",
+    8: "Picture",
+    9: "Public",
+    10: "Video",
+    11: "Resource",
+    12: "Temp",
+    13: "AppConfig",
+    14: "AppData",
+    15: "AppLocalData",
+    16: "AppCache",
+    17: "AppLog",
+    18: "Desktop",
+    19: "Executable",
+    20: "Font",
+    21: "Home",
+    22: "Runtime",
+    23: "Template",
+    Audio: 1,
+    Cache: 2,
+    Config: 3,
+    Data: 4,
+    LocalData: 5,
+    Document: 6,
+    Download: 7,
+    Picture: 8,
+    Public: 9,
+    Video: 10,
+    Resource: 11,
+    Temp: 12,
+    AppConfig: 13,
+    AppData: 14,
+    AppLocalData: 15,
+    AppCache: 16,
+    AppLog: 17,
+    Desktop: 18,
+    Executable: 19,
+    Font: 20,
+    Home: 21,
+    Runtime: 22,
+    Template: 23,
+  }
+  const resolveBaseDir = (directory) =>
+    tauriInvoke("plugin:path|resolve_directory", { directory })
+  const userAttentionType = {
+    1: "Critical",
+    2: "Informational",
+    Critical: 1,
+    Informational: 2,
+  }
+  const progressBarStatus = {
+    None: "none",
+    Normal: "normal",
+    Indeterminate: "indeterminate",
+    Paused: "paused",
+    Error: "error",
+  }
+  window.__TAURI__ = window.__TAURI__ || {}
+  window.__TAURI__.invoke = window.__TAURI__.invoke || tauriInvoke
+  window.__TAURI__.convertFileSrc =
+    window.__TAURI__.convertFileSrc || convertHostFileSrc
+  window.__TAURI__.isTauri = window.__TAURI__.isTauri || (() => true)
+  window.__TAURI__.transformCallback =
+    window.__TAURI__.transformCallback || transformCallback
+  window.__TAURI__.unregisterCallback =
+    window.__TAURI__.unregisterCallback || unregisterCallback
+  window.__TAURI__.core = {
+    ...(window.__TAURI__.core || {}),
+    SERIALIZE_TO_IPC_FN: tauriSerializeToIpcKey,
+    Channel: window.__TAURI__.core?.Channel || OtoolsCompatChannel,
+    Resource: window.__TAURI__.core?.Resource || OtoolsCompatResource,
+    PluginListener:
+      window.__TAURI__.core?.PluginListener || OtoolsCompatPluginListener,
+    invoke: tauriInvoke,
+    convertFileSrc: convertHostFileSrc,
+    isTauri: () => true,
+    transformCallback,
+    addPluginListener,
+    checkPermissions: (plugin) =>
+      tauriInvoke(`plugin:${plugin}|check_permissions`, {}),
+    requestPermissions: (plugin) =>
+      tauriInvoke(`plugin:${plugin}|request_permissions`, {}),
+  }
+  window.__TAURI__.event = {
+    ...(window.__TAURI__.event || {}),
+    TauriEvent: window.__TAURI__.event?.TauriEvent || tauriEventConstants,
+    listen: (event, handler, options) => {
+      const handlerId = transformCallback(handler)
+      return tauriInvoke("plugin:event|listen", {
+        event: toStringSafe(event),
+        target:
+          options && typeof options === "object" && "target" in options
+            ? options.target
+            : { kind: "Any" },
+        handler: handlerId,
+      }).then((eventId) => async () => {
+        unregisterCallback(handlerId)
+        unregisterEventListener({ eventId })
+        await tauriInvoke("plugin:event|unlisten", {
+          event: toStringSafe(event),
+          eventId,
+        })
+      })
+    },
+    once: (event, handler, options) => {
+      let unlisten = null
+      return window.__TAURI__.event
+        .listen(
+          event,
+          async (payload) => {
+            if (unlisten) {
+              await unlisten()
+            }
+            handler(payload)
+          },
+          options
+        )
+        .then((nextUnlisten) => {
+          unlisten = nextUnlisten
+          return nextUnlisten
+        })
+    },
+    emit: (event, payloadValue) =>
+      tauriInvoke("plugin:event|emit", {
+        event: toStringSafe(event),
+        payload: payloadValue ?? null,
+      }),
+    emitTo: (target, event, payloadValue) =>
+      tauriInvoke("plugin:event|emit_to", {
+        target,
+        event: toStringSafe(event),
+        payload: payloadValue ?? null,
+      }),
+  }
+  window.__TAURI__.dialog = {
+    ...(window.__TAURI__.dialog || {}),
+    ...dialog,
+  }
+  window.__TAURI__.shell = {
+    ...(window.__TAURI__.shell || {}),
+    ...shell,
+  }
+  window.__TAURI__.opener = {
+    ...(window.__TAURI__.opener || {}),
+    openUrl: (url) =>
+      tauriInvoke("plugin:opener|open_url", { url: toStringSafe(url) }),
+    open_url: (url) =>
+      tauriInvoke("plugin:opener|open_url", { url: toStringSafe(url) }),
+    openPath: (path) =>
+      tauriInvoke("plugin:opener|open_path", { path: toStringSafe(path) }),
+    open_path: (path) =>
+      tauriInvoke("plugin:opener|open_path", { path: toStringSafe(path) }),
+    revealItemInDir: (path) =>
+      tauriInvoke("plugin:opener|reveal_item_in_dir", {
+        path: toStringSafe(path),
+      }),
+    reveal_item_in_dir: (path) =>
+      tauriInvoke("plugin:opener|reveal_item_in_dir", {
+        path: toStringSafe(path),
+      }),
+  }
+  window.__TAURI__.notification = {
+    ...(window.__TAURI__.notification || {}),
+    isPermissionGranted: () =>
+      tauriInvoke("plugin:notification|is_permission_granted", {}),
+    requestPermission: () =>
+      typeof Notification !== "undefined" &&
+      typeof Notification.requestPermission === "function"
+        ? Notification.requestPermission()
+        : Promise.resolve("granted"),
+    sendNotification: (options) =>
+      tauriInvoke("plugin:notification|notify", {
+        title:
+          typeof options === "string"
+            ? options
+            : toStringSafe(options && options.title),
+        body:
+          typeof options === "string"
+            ? ""
+            : toStringSafe(options && options.body),
+      }),
+    pending: () => tauriInvoke("plugin:notification|get_pending", {}),
+    active: () => tauriInvoke("plugin:notification|get_active", {}),
+    cancel: (notifications) =>
+      tauriInvoke("plugin:notification|cancel", { notifications }),
+    cancelAll: () => tauriInvoke("plugin:notification|cancel", {}),
+    removeActive: (notifications) =>
+      tauriInvoke("plugin:notification|remove_active", { notifications }),
+    removeAllActive: () =>
+      tauriInvoke("plugin:notification|remove_active", {}),
+    channels: () => tauriInvoke("plugin:notification|listChannels", {}),
+  }
+  window.__TAURI__.process = {
+    ...(window.__TAURI__.process || {}),
+    exit: (code) => tauriInvoke("plugin:process|exit", { code }),
+    relaunch: () => tauriInvoke("plugin:process|restart", {}),
+    restart: () => tauriInvoke("plugin:process|restart", {}),
+  }
+  window.__TAURI__.updater = {
+    ...(window.__TAURI__.updater || {}),
+    check: () => tauriInvoke("plugin:updater|check", {}),
+  }
+  window.__TAURI__.globalShortcut = {
+    ...(window.__TAURI__.globalShortcut || {}),
+    register: (shortcuts, handler) =>
+      tauriInvoke("plugin:global-shortcut|register", {
+        shortcuts: Array.isArray(shortcuts) ? shortcuts : [shortcuts],
+        handler: new OtoolsCompatChannel(handler),
+      }),
+    unregister: (shortcuts) =>
+      tauriInvoke("plugin:global-shortcut|unregister", {
+        shortcuts: Array.isArray(shortcuts) ? shortcuts : [shortcuts],
+      }),
+    unregisterAll: () =>
+      tauriInvoke("plugin:global-shortcut|unregister_all", {}),
+    isRegistered: (shortcut) =>
+      tauriInvoke("plugin:global-shortcut|is_registered", { shortcut }),
+  }
+  window.__TAURI__.app = {
+    ...(window.__TAURI__.app || {}),
+    BundleType: window.__TAURI__.app?.BundleType || bundleType,
+    getName: () => tauriInvoke("plugin:app|name", {}),
+    getVersion: () => tauriInvoke("plugin:app|version", {}),
+    getTauriVersion: () => tauriInvoke("plugin:app|tauri_version", {}),
+    getIdentifier: () => tauriInvoke("plugin:app|identifier", {}),
+    getBundleType: () => tauriInvoke("plugin:app|bundle_type", {}),
+    show: () => tauriInvoke("plugin:app|app_show", {}),
+    hide: () => tauriInvoke("plugin:app|app_hide", {}),
+    defaultWindowIcon: () => tauriInvoke("plugin:app|default_window_icon", {}),
+    setTheme: (theme) => tauriInvoke("plugin:app|set_app_theme", { theme }),
+    setDockVisibility: (visible) =>
+      tauriInvoke("plugin:app|set_dock_visibility", { visible }),
+    fetchDataStoreIdentifiers: () =>
+      tauriInvoke("plugin:app|fetch_data_store_identifiers", {}),
+    removeDataStore: (uuid) =>
+      tauriInvoke("plugin:app|remove_data_store", { uuid }),
+    onBackButtonPress: (handler) =>
+      addPluginListener("app", "back-button", handler),
+  }
+  window.__TAURI__.window = {
+    ...(window.__TAURI__.window || {}),
+    UserAttentionType:
+      window.__TAURI__.window?.UserAttentionType || userAttentionType,
+    ProgressBarStatus:
+      window.__TAURI__.window?.ProgressBarStatus || progressBarStatus,
+    Window: window.__TAURI__.window?.Window || OtoolsCompatWindow,
+    getCurrentWindow: () => currentWindowHandle,
+    getAllWindows: () => OtoolsCompatWindow.getAll(),
+    getFocusedWindow: () => OtoolsCompatWindow.getFocusedWindow(),
+    appWindow: currentWindowHandle,
+  }
+  window.__TAURI__.webview = {
+    ...(window.__TAURI__.webview || {}),
+    Webview: window.__TAURI__.webview?.Webview || OtoolsCompatWebview,
+    getCurrentWebview: () => currentWebviewHandle,
+    getAllWebviews: () => OtoolsCompatWebview.getAll(),
+  }
+  window.__TAURI__.webviewWindow = {
+    ...(window.__TAURI__.webviewWindow || {}),
+    WebviewWindow:
+      window.__TAURI__.webviewWindow?.WebviewWindow || OtoolsCompatWebviewWindow,
+    getCurrentWebviewWindow: () => currentWebviewWindowHandle,
+    getAllWebviewWindows: () => OtoolsCompatWebviewWindow.getAll(),
+  }
+  window.__TAURI__.dpi = {
+    ...(window.__TAURI__.dpi || {}),
+    LogicalSize: window.__TAURI__.dpi?.LogicalSize || OtoolsCompatLogicalSize,
+    PhysicalSize:
+      window.__TAURI__.dpi?.PhysicalSize || OtoolsCompatPhysicalSize,
+    Size: window.__TAURI__.dpi?.Size || OtoolsCompatSize,
+    LogicalPosition:
+      window.__TAURI__.dpi?.LogicalPosition || OtoolsCompatLogicalPosition,
+    PhysicalPosition:
+      window.__TAURI__.dpi?.PhysicalPosition || OtoolsCompatPhysicalPosition,
+    Position: window.__TAURI__.dpi?.Position || OtoolsCompatPosition,
+  }
+  window.__TAURI__.path = {
+    ...(window.__TAURI__.path || {}),
+    BaseDirectory: window.__TAURI__.path?.BaseDirectory || baseDirectory,
+    sep: () => window.__TAURI_INTERNALS__.plugins.path.sep,
+    delimiter: () => window.__TAURI_INTERNALS__.plugins.path.delimiter,
+    appConfigDir: () => resolveBaseDir(13),
+    appDataDir: () => resolveBaseDir(14),
+    appLocalDataDir: () => resolveBaseDir(15),
+    appCacheDir: () => resolveBaseDir(16),
+    appLogDir: () => resolveBaseDir(17),
+    audioDir: () => resolveBaseDir(1),
+    cacheDir: () => resolveBaseDir(2),
+    configDir: () => resolveBaseDir(3),
+    dataDir: () => resolveBaseDir(4),
+    desktopDir: () => resolveBaseDir(18),
+    documentDir: () => resolveBaseDir(6),
+    downloadDir: () => resolveBaseDir(7),
+    executableDir: () => resolveBaseDir(19),
+    fontDir: () => resolveBaseDir(20),
+    homeDir: () => resolveBaseDir(21),
+    localDataDir: () => resolveBaseDir(5),
+    pictureDir: () => resolveBaseDir(8),
+    publicDir: () => resolveBaseDir(9),
+    resourceDir: () => resolveBaseDir(11),
+    runtimeDir: () => resolveBaseDir(22),
+    tempDir: () => resolveBaseDir(12),
+    templateDir: () => resolveBaseDir(23),
+    videoDir: () => resolveBaseDir(10),
+    join: (...paths) => tauriInvoke("plugin:path|join", { paths }),
+    resolve: (...paths) => tauriInvoke("plugin:path|resolve", { paths }),
+    normalize: (path) =>
+      tauriInvoke("plugin:path|normalize", { path: toStringSafe(path) }),
+    dirname: (path) =>
+      tauriInvoke("plugin:path|dirname", { path: toStringSafe(path) }),
+    extname: (path) =>
+      tauriInvoke("plugin:path|extname", { path: toStringSafe(path) }),
+    basename: (path, ext) =>
+      tauriInvoke("plugin:path|basename", {
+        path: toStringSafe(path),
+        ext: ext === undefined ? undefined : toStringSafe(ext),
+      }),
+    isAbsolute: (path) =>
+      tauriInvoke("plugin:path|is_absolute", { path: toStringSafe(path) }),
+    resolveResource: (resourcePath) =>
+      tauriInvoke("plugin:path|resolve_directory", {
+        directory: 11,
+        path: toStringSafe(resourcePath),
+      }),
   }
   window.__CODEG_OTOOLS_WINDOW_LABEL__ = windowLabel
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ =
@@ -3187,6 +6243,9 @@ function otoolsCompatBootstrap(config: {
 
   window.__OToolsHostInvoke = tauriInvoke
   window.isTauri = true
+  installClipboardCompat()
+  installOtoolsBrowserBehaviorBridge()
+  installHostFileSystemAccessPolyfill()
 
   try {
     Object.defineProperty(window, "otools", {
@@ -3854,6 +6913,16 @@ function readNumberField(
   return Math.max(1, Math.floor(raw))
 }
 
+function readOptionalIntervalMs(payload: unknown): number | null {
+  const record = asRecord(payload)
+  const raw = record?.intervalMs ?? record?.interval_ms
+  const value =
+    typeof raw === "number" || typeof raw === "string"
+      ? Number(raw)
+      : Number.NaN
+  return Number.isFinite(value) ? Math.floor(value) : null
+}
+
 function readBooleanField(payload: unknown, field: string): boolean {
   const record = asRecord(payload)
   const direct = record?.[field]
@@ -3901,6 +6970,36 @@ function readArrayField(payload: unknown, field: string): unknown[] {
   return Array.isArray(payload) ? payload : []
 }
 
+function readDialogFilters(
+  value: unknown
+): Array<{ name: string; extensions: string[] }> | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+  const filters = value
+    .map((item) => {
+      const record = asRecord(item)
+      const extensions = Array.isArray(record?.extensions)
+        ? record.extensions
+            .map((extension) =>
+              String(extension || "")
+                .trim()
+                .replace(/^\./, "")
+            )
+            .filter(Boolean)
+        : []
+      return {
+        name:
+          typeof record?.name === "string" && record.name.trim()
+            ? record.name.trim()
+            : "Files",
+        extensions,
+      }
+    })
+    .filter((item) => item.extensions.length)
+  return filters.length ? filters : undefined
+}
+
 function normalizeToolsShellShortcutAction(
   value: string
 ): OtoolsHostShellShortcutDetail["action"] | null {
@@ -3916,6 +7015,7 @@ function normalizeToolsShellShortcutAction(
 
 function extractDialogOpenOptions(payload: unknown): {
   directory?: boolean
+  filters?: Array<{ name: string; extensions: string[] }>
   multiple?: boolean
   title?: string
   defaultPath?: string
@@ -3928,6 +7028,7 @@ function extractDialogOpenOptions(payload: unknown): {
         ? options.defaultPath
         : undefined,
     directory: options?.directory === true,
+    filters: readDialogFilters(options?.filters),
     multiple: options?.multiple === true,
     title: typeof options?.title === "string" ? options.title : undefined,
   }
@@ -3935,6 +7036,7 @@ function extractDialogOpenOptions(payload: unknown): {
 
 function extractDialogSaveOptions(payload: unknown): {
   defaultPath?: string
+  filters?: Array<{ name: string; extensions: string[] }>
   title?: string
 } {
   const record = asRecord(payload)
@@ -3944,12 +7046,14 @@ function extractDialogSaveOptions(payload: unknown): {
       typeof options?.defaultPath === "string"
         ? options.defaultPath
         : undefined,
+    filters: readDialogFilters(options?.filters),
     title: typeof options?.title === "string" ? options.title : undefined,
   }
 }
 
 function extractWebviewPickOptions(payload: unknown): {
   directory?: string
+  filters?: Array<{ name: string; extensions: string[] }>
   multiple?: boolean
   title?: string
   suggestedName?: string
@@ -3959,6 +7063,7 @@ function extractWebviewPickOptions(payload: unknown): {
   return {
     directory:
       typeof options?.directory === "string" ? options.directory : undefined,
+    filters: readDialogFilters(options?.filters),
     multiple: options?.multiple === true,
     suggestedName:
       typeof options?.suggestedName === "string"
@@ -3969,6 +7074,18 @@ function extractWebviewPickOptions(payload: unknown): {
 }
 
 async function pickHostFiles(payload: unknown): Promise<unknown[]> {
+  const options = extractWebviewPickOptions(payload)
+  if (isDesktop() && getActiveRemoteConnectionId() === null) {
+    try {
+      const result = await getTransport().call("tools_webview_pick_files", {
+        options,
+      })
+      if (Array.isArray(result)) {
+        return result
+      }
+    } catch {}
+  }
+
   const paths = await pickHostFilePaths(payload)
   const files: unknown[] = []
   for (const path of paths) {
@@ -3980,15 +7097,49 @@ async function pickHostFiles(payload: unknown): Promise<unknown[]> {
 async function pickHostFilePaths(payload: unknown): Promise<string[]> {
   const options = extractWebviewPickOptions(payload)
   if (isDesktop() && getActiveRemoteConnectionId() === null) {
+    try {
+      const result = await getTransport().call("tools_webview_pick_files", {
+        options,
+      })
+      if (Array.isArray(result)) {
+        return normalizePickedPathList(
+          result
+            .map((item) => {
+              const record = asRecord(item)
+              return typeof record?.path === "string" ? record.path : ""
+            })
+            .filter(Boolean),
+          options.multiple === true
+        )
+      }
+    } catch {}
     return normalizePickedPathList(
       await openFileDialog({
         defaultPath: options.directory,
+        filters: options.filters,
         multiple: options.multiple,
         title: options.title,
       }),
       options.multiple === true
     )
   }
+
+  try {
+    const result = await getTransport().call("tools_webview_pick_files", {
+      options,
+    })
+    if (Array.isArray(result)) {
+      return normalizePickedPathList(
+        result
+          .map((item) => {
+            const record = asRecord(item)
+            return typeof record?.path === "string" ? record.path : ""
+          })
+          .filter(Boolean),
+        options.multiple === true
+      )
+    }
+  } catch {}
 
   const raw = window.prompt(
     options.title ?? "Enter host file path",
@@ -4002,18 +7153,37 @@ async function pickHostFolder(
   payload: unknown
 ): Promise<{ path: string; name: string } | null> {
   const options = extractWebviewPickOptions(payload)
-  const result =
-    isDesktop() && getActiveRemoteConnectionId() === null
-      ? await openFileDialog({
-          defaultPath: options.directory,
-          directory: true,
-          title: options.title,
-        })
-      : window.prompt(
-          options.title ?? "Enter host folder path",
-          options.directory ?? ""
-        )
-  const path = normalizePickedPathList(result, false)[0]
+  try {
+    const result = await getTransport().call("tools_webview_pick_folder", {
+      options,
+    })
+    const record = asRecord(result)
+    if (record && typeof record.path === "string" && record.path.trim()) {
+      return buildHostPathEntry(
+        record.path,
+        typeof record.name === "string" ? record.name : "folder"
+      )
+    }
+    if (result === null) {
+      return null
+    }
+  } catch {}
+
+  if (isDesktop() && getActiveRemoteConnectionId() === null) {
+    const result = await openFileDialog({
+      defaultPath: options.directory,
+      directory: true,
+      title: options.title,
+    })
+    const path = normalizePickedPathList(result, false)[0]
+    return path ? buildHostPathEntry(path, "folder") : null
+  }
+
+  const prompted = window.prompt(
+    options.title ?? "Enter host folder path",
+    options.directory ?? ""
+  )
+  const path = normalizePickedPathList(prompted, false)[0]
   return path ? buildHostPathEntry(path, "folder") : null
 }
 
@@ -4021,11 +7191,28 @@ async function pickHostSavePath(
   payload: unknown
 ): Promise<{ path: string; name: string } | null> {
   const options = extractWebviewPickOptions(payload)
+  try {
+    const result = await getTransport().call("tools_webview_pick_save_path", {
+      options,
+    })
+    const record = asRecord(result)
+    if (record && typeof record.path === "string" && record.path.trim()) {
+      return buildHostPathEntry(
+        record.path,
+        typeof record.name === "string" ? record.name : "file"
+      )
+    }
+    if (result === null) {
+      return null
+    }
+  } catch {}
+
   const defaultPath = options.suggestedName
     ? [options.directory, options.suggestedName].filter(Boolean).join("/")
     : options.directory
   const path = await saveDialog({
     defaultPath,
+    filters: options.filters,
     title: options.title,
   })
   return path ? buildHostPathEntry(path, "file") : null
@@ -4134,6 +7321,14 @@ function readShellOpenTarget(payload: unknown): string {
   ).trim()
 }
 
+function readFirstPathField(payload: unknown): string {
+  const direct = readStringField(payload, "path").trim()
+  if (direct) {
+    return direct
+  }
+  return readStringArrayField(payload, "paths")[0]?.trim() || ""
+}
+
 function isExternalShellTarget(target: string): boolean {
   if (/^[a-zA-Z]:[\\/]/.test(target)) {
     return false
@@ -4217,6 +7412,7 @@ async function openOtoolsShellTarget(payload: unknown): Promise<void> {
 
 async function saveDialog(options: {
   defaultPath?: string
+  filters?: Array<{ name: string; extensions: string[] }>
   title?: string
 }): Promise<string | null> {
   if (isDesktop() && getActiveRemoteConnectionId() === null) {

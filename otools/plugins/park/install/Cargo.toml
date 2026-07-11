@@ -1,0 +1,14 @@
+[package]
+name = "otools-plugin-park-install"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4"
+otools-core = { path = "../../../core" }
+otools-plugin-package = { path = "../../package" }
+otools-plugin-park-catalog = { path = "../catalog" }
+otools-plugin-park-download = { path = "../download" }
+otools-plugin-park-install-record = { path = "../install-record" }
+otools-plugin-support = { path = "../../support" }
+serde = { version = "1", features = ["derive"] }

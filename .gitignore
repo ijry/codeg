@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 tsconfig.tsbuildinfo
+!otools/sdk/plugin-sdk/dist/
+!otools/sdk/plugin-sdk/dist/**
 
 # Next.js
 .next/

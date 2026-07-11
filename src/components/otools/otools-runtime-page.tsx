@@ -15,7 +15,7 @@ import type {
   OtoolsHostChildLocaleSyncDetail,
   OtoolsHostChildThemeSyncDetail,
 } from "@/lib/otools/host-events"
-import { isDesktop } from "@/lib/transport"
+import { isDesktop, isRemoteDesktopMode } from "@/lib/transport"
 import type { OtoolsPluginInfo } from "@/lib/otools/types"
 
 const RESERVED_RUNTIME_QUERY_KEYS = new Set([
@@ -37,7 +37,7 @@ export function OtoolsRuntimePage() {
 
   useEffect(() => {
     let cancelled = false
-    const hostIsDesktop = isDesktop()
+    const hostIsLocalDesktop = isDesktop() && !isRemoteDesktopMode()
     const params = new URLSearchParams(queryString)
     const pluginUuid = params.get("pluginUuid")?.trim() || ""
     const windowLabel = params.get("windowLabel")?.trim() || null
@@ -110,7 +110,7 @@ export function OtoolsRuntimePage() {
         window as Window & {
           __CODEG_OTOOLS_FORCE_WEB__?: boolean
         }
-      ).__CODEG_OTOOLS_FORCE_WEB__ = !hostIsDesktop
+      ).__CODEG_OTOOLS_FORCE_WEB__ = !hostIsLocalDesktop
 
       document.title = runtimeTitle
       document.open()
@@ -160,7 +160,11 @@ function resolveRuntimeEntryUrl(
   }
 
   const parsedSource = parseSameOriginUrl(sourceUrl)
-  if (parsedSource && parsedSource.pathname.includes(plugin.assetBaseUrl)) {
+  if (
+    parsedSource &&
+    plugin.assetBaseUrl &&
+    parsedSource.pathname.includes(plugin.assetBaseUrl)
+  ) {
     return appendQueryToUrl(parsedSource.toString(), passthroughQuery)
   }
 
@@ -193,6 +197,9 @@ function buildAssetEntryUrl(
     typeof window !== "undefined" ? window.location.origin : "http://localhost"
   const cleanBase = plugin.assetBaseUrl.replace(/\/+$/, "")
   const cleanEntry = entryPath.replace(/^\/+/, "")
+  if (!cleanBase) {
+    return buildOtoolsPluginUrl(plugin)
+  }
   return `${origin}${cleanBase}/${cleanEntry}`
 }
 

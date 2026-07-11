@@ -1,0 +1,521 @@
+{
+  "name": "otools-plugin-sdk",
+  "version": "0.1.0",
+  "description": "OTools compatibility SDK for migrating Tauri apps into OTools plugins",
+  "keywords": [
+    "otools",
+    "tauri",
+    "vite",
+    "plugin",
+    "sdk"
+  ],
+  "homepage": "https://github.com/farion1231/cc-switch/tree/main/otools-plugin-sdk",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/farion1231/cc-switch.git",
+    "directory": "otools-plugin-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/farion1231/cc-switch/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./aliases": {
+      "types": "./dist/aliases.d.ts",
+      "import": "./dist/aliases.js",
+      "default": "./dist/aliases.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js",
+      "default": "./dist/vite.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js",
+      "default": "./dist/runtime.js"
+    },
+    "./popup-manager": {
+      "types": "./dist/popup-manager.d.ts",
+      "import": "./dist/popup-manager.js",
+      "default": "./dist/popup-manager.js"
+    },
+    "./native-event-bridge": {
+      "types": "./dist/native-event-bridge.d.ts",
+      "import": "./dist/native-event-bridge.js",
+      "default": "./dist/native-event-bridge.js"
+    },
+    "./dialog": {
+      "types": "./dist/dialog.d.ts",
+      "import": "./dist/dialog.js",
+      "default": "./dist/dialog.js"
+    },
+    "./tauri-api-shim": {
+      "types": "./dist/tauri-api-shim.d.ts",
+      "import": "./dist/tauri-api-shim.js",
+      "default": "./dist/tauri-api-shim.js"
+    },
+    "./tauri-core-shim": {
+      "types": "./dist/tauri-core-shim.d.ts",
+      "import": "./dist/tauri-core-shim.js",
+      "default": "./dist/tauri-core-shim.js"
+    },
+    "./tauri-event-shim": {
+      "types": "./dist/tauri-event-shim.d.ts",
+      "import": "./dist/tauri-event-shim.js",
+      "default": "./dist/tauri-event-shim.js"
+    },
+    "./tauri-dpi-shim": {
+      "types": "./dist/tauri-dpi-shim.d.ts",
+      "import": "./dist/tauri-dpi-shim.js",
+      "default": "./dist/tauri-dpi-shim.js"
+    },
+    "./tauri-window-shim": {
+      "types": "./dist/tauri-window-shim.d.ts",
+      "import": "./dist/tauri-window-shim.js",
+      "default": "./dist/tauri-window-shim.js"
+    },
+    "./tauri-webview-shim": {
+      "types": "./dist/tauri-webview-shim.d.ts",
+      "import": "./dist/tauri-webview-shim.js",
+      "default": "./dist/tauri-webview-shim.js"
+    },
+    "./tauri-webview-window-shim": {
+      "types": "./dist/tauri-webview-window-shim.d.ts",
+      "import": "./dist/tauri-webview-window-shim.js",
+      "default": "./dist/tauri-webview-window-shim.js"
+    },
+    "./tauri-app-shim": {
+      "types": "./dist/tauri-app-shim.d.ts",
+      "import": "./dist/tauri-app-shim.js",
+      "default": "./dist/tauri-app-shim.js"
+    },
+    "./tauri-plugin-dialog-shim": {
+      "types": "./dist/tauri-plugin-dialog-shim.d.ts",
+      "import": "./dist/tauri-plugin-dialog-shim.js",
+      "default": "./dist/tauri-plugin-dialog-shim.js"
+    },
+    "./tauri-plugin-opener-shim": {
+      "types": "./dist/tauri-plugin-opener-shim.d.ts",
+      "import": "./dist/tauri-plugin-opener-shim.js",
+      "default": "./dist/tauri-plugin-opener-shim.js"
+    },
+    "./tauri-plugin-shell-shim": {
+      "types": "./dist/tauri-plugin-shell-shim.d.ts",
+      "import": "./dist/tauri-plugin-shell-shim.js",
+      "default": "./dist/tauri-plugin-shell-shim.js"
+    },
+    "./tauri-plugin-process-shim": {
+      "types": "./dist/tauri-plugin-process-shim.d.ts",
+      "import": "./dist/tauri-plugin-process-shim.js",
+      "default": "./dist/tauri-plugin-process-shim.js"
+    },
+    "./tauri-plugin-updater-shim": {
+      "types": "./dist/tauri-plugin-updater-shim.d.ts",
+      "import": "./dist/tauri-plugin-updater-shim.js",
+      "default": "./dist/tauri-plugin-updater-shim.js"
+    },
+    "./tauri-plugin-notification-shim": {
+      "types": "./dist/tauri-plugin-notification-shim.d.ts",
+      "import": "./dist/tauri-plugin-notification-shim.js",
+      "default": "./dist/tauri-plugin-notification-shim.js"
+    },
+    "./remote-service-shim": {
+      "types": "./dist/remote-service-shim.d.ts",
+      "import": "./dist/remote-service-shim.js",
+      "default": "./dist/remote-service-shim.js"
+    },
+    "./remote-service-otools-web-shim": {
+      "types": "./dist/remote-service-otools-web-shim.d.ts",
+      "import": "./dist/remote-service-otools-web-shim.js",
+      "default": "./dist/remote-service-otools-web-shim.js"
+    },
+    "./remote-service-otools-web-ws-shim": {
+      "types": "./dist/remote-service-otools-web-ws-shim.d.ts",
+      "import": "./dist/remote-service-otools-web-ws-shim.js",
+      "default": "./dist/remote-service-otools-web-ws-shim.js"
+    },
+    "./remote-service-runtime-shim": {
+      "types": "./dist/remote-service-runtime-shim.d.ts",
+      "import": "./dist/remote-service-runtime-shim.js",
+      "default": "./dist/remote-service-runtime-shim.js"
+    },
+    "./remote-service-api-core-shim": {
+      "types": "./dist/remote-service-api-core-shim.d.ts",
+      "import": "./dist/remote-service-api-core-shim.js",
+      "default": "./dist/remote-service-api-core-shim.js"
+    },
+    "./remote-service-api-event-shim": {
+      "types": "./dist/remote-service-api-event-shim.d.ts",
+      "import": "./dist/remote-service-api-event-shim.js",
+      "default": "./dist/remote-service-api-event-shim.js"
+    },
+    "./remote-service-compat-file-shim": {
+      "types": "./dist/remote-service-compat-file-shim.d.ts",
+      "import": "./dist/remote-service-compat-file-shim.js",
+      "default": "./dist/remote-service-compat-file-shim.js"
+    },
+    "./remote-service-compat-path-shim": {
+      "types": "./dist/remote-service-compat-path-shim.d.ts",
+      "import": "./dist/remote-service-compat-path-shim.js",
+      "default": "./dist/remote-service-compat-path-shim.js"
+    },
+    "./remote-service-compat-shell-shim": {
+      "types": "./dist/remote-service-compat-shell-shim.d.ts",
+      "import": "./dist/remote-service-compat-shell-shim.js",
+      "default": "./dist/remote-service-compat-shell-shim.js"
+    },
+    "./remote-service-host-fs-shim": {
+      "types": "./dist/remote-service-host-fs-shim.d.ts",
+      "import": "./dist/remote-service-host-fs-shim.js",
+      "default": "./dist/remote-service-host-fs-shim.js"
+    },
+    "./remote-service-host-shell-shim": {
+      "types": "./dist/remote-service-host-shell-shim.d.ts",
+      "import": "./dist/remote-service-host-shell-shim.js",
+      "default": "./dist/remote-service-host-shell-shim.js"
+    },
+    "./legacy/utils/remoteServiceBridge": {
+      "types": "./dist/legacy/utils/remoteServiceBridge.d.ts",
+      "import": "./dist/legacy/utils/remoteServiceBridge.js",
+      "default": "./dist/legacy/utils/remoteServiceBridge.js"
+    },
+    "./legacy/utils/runtime": {
+      "types": "./dist/legacy/utils/runtime.d.ts",
+      "import": "./dist/legacy/utils/runtime.js",
+      "default": "./dist/legacy/utils/runtime.js"
+    },
+    "./legacy/utils/fileSrc": {
+      "types": "./dist/legacy/utils/fileSrc.d.ts",
+      "import": "./dist/legacy/utils/fileSrc.js",
+      "default": "./dist/legacy/utils/fileSrc.js"
+    },
+    "./legacy/utils/hostFs": {
+      "types": "./dist/legacy/utils/hostFs.d.ts",
+      "import": "./dist/legacy/utils/hostFs.js",
+      "default": "./dist/legacy/utils/hostFs.js"
+    },
+    "./legacy/utils/hostPickers": {
+      "types": "./dist/legacy/utils/hostPickers.d.ts",
+      "import": "./dist/legacy/utils/hostPickers.js",
+      "default": "./dist/legacy/utils/hostPickers.js"
+    },
+    "./legacy/utils/hostShell": {
+      "types": "./dist/legacy/utils/hostShell.d.ts",
+      "import": "./dist/legacy/utils/hostShell.js",
+      "default": "./dist/legacy/utils/hostShell.js"
+    },
+    "./legacy/utils/appTheme": {
+      "types": "./dist/legacy/utils/appTheme.d.ts",
+      "import": "./dist/legacy/utils/appTheme.js",
+      "default": "./dist/legacy/utils/appTheme.js"
+    },
+    "./legacy/utils/ai": {
+      "types": "./dist/legacy/utils/ai.d.ts",
+      "import": "./dist/legacy/utils/ai.js",
+      "default": "./dist/legacy/utils/ai.js"
+    },
+    "./legacy/utils/dbm": {
+      "types": "./dist/legacy/utils/dbm.d.ts",
+      "import": "./dist/legacy/utils/dbm.js",
+      "default": "./dist/legacy/utils/dbm.js"
+    },
+    "./legacy/utils/ftp": {
+      "types": "./dist/legacy/utils/ftp.d.ts",
+      "import": "./dist/legacy/utils/ftp.js",
+      "default": "./dist/legacy/utils/ftp.js"
+    },
+    "./legacy/utils/http": {
+      "types": "./dist/legacy/utils/http.d.ts",
+      "import": "./dist/legacy/utils/http.js",
+      "default": "./dist/legacy/utils/http.js"
+    },
+    "./legacy/utils/markdown": {
+      "types": "./dist/legacy/utils/markdown.d.ts",
+      "import": "./dist/legacy/utils/markdown.js",
+      "default": "./dist/legacy/utils/markdown.js"
+    },
+    "./legacy/utils/mqtt": {
+      "types": "./dist/legacy/utils/mqtt.d.ts",
+      "import": "./dist/legacy/utils/mqtt.js",
+      "default": "./dist/legacy/utils/mqtt.js"
+    },
+    "./legacy/utils/pakcap": {
+      "types": "./dist/legacy/utils/pakcap.d.ts",
+      "import": "./dist/legacy/utils/pakcap.js",
+      "default": "./dist/legacy/utils/pakcap.js"
+    },
+    "./legacy/utils/notification": {
+      "import": "./dist/legacy/utils/notification.js",
+      "default": "./dist/legacy/utils/notification.js"
+    },
+    "./legacy/utils/remotePath": {
+      "types": "./dist/legacy/utils/remotePath.d.ts",
+      "import": "./dist/legacy/utils/remotePath.js",
+      "default": "./dist/legacy/utils/remotePath.js"
+    },
+    "./legacy/utils/termThemes": {
+      "import": "./dist/legacy/utils/termThemes.js",
+      "default": "./dist/legacy/utils/termThemes.js"
+    },
+    "./legacy/utils/tts": {
+      "types": "./dist/legacy/utils/tts.d.ts",
+      "import": "./dist/legacy/utils/tts.js",
+      "default": "./dist/legacy/utils/tts.js"
+    },
+    "./legacy/platform/runtime": {
+      "types": "./dist/legacy/platform/runtime.d.ts",
+      "import": "./dist/legacy/platform/runtime.js",
+      "default": "./dist/legacy/platform/runtime.js"
+    },
+    "./legacy/platform/transport/invoke": {
+      "types": "./dist/legacy/platform/transport/invoke.d.ts",
+      "import": "./dist/legacy/platform/transport/invoke.js",
+      "default": "./dist/legacy/platform/transport/invoke.js"
+    },
+    "./legacy/platform/transport/hostBridge": {
+      "types": "./dist/legacy/platform/transport/hostBridge.d.ts",
+      "import": "./dist/legacy/platform/transport/hostBridge.js",
+      "default": "./dist/legacy/platform/transport/hostBridge.js"
+    },
+    "./legacy/platform/host-services/fs": {
+      "types": "./dist/legacy/platform/host-services/fs.d.ts",
+      "import": "./dist/legacy/platform/host-services/fs.js",
+      "default": "./dist/legacy/platform/host-services/fs.js"
+    },
+    "./legacy/platform/host-services/shell": {
+      "types": "./dist/legacy/platform/host-services/shell.d.ts",
+      "import": "./dist/legacy/platform/host-services/shell.js",
+      "default": "./dist/legacy/platform/host-services/shell.js"
+    },
+    "./legacy/platform/i18n": {
+      "types": "./dist/legacy/platform/i18n.d.ts",
+      "import": "./dist/legacy/platform/i18n.js",
+      "default": "./dist/legacy/platform/i18n.js"
+    },
+    "./legacy/platform/services/project-runner/commandRunner": {
+      "types": "./dist/legacy/platform/services/project-runner/commandRunner.d.ts",
+      "import": "./dist/legacy/platform/services/project-runner/commandRunner.js",
+      "default": "./dist/legacy/platform/services/project-runner/commandRunner.js"
+    },
+    "./legacy/platform/services/project-runner/packageScripts": {
+      "types": "./dist/legacy/platform/services/project-runner/packageScripts.d.ts",
+      "import": "./dist/legacy/platform/services/project-runner/packageScripts.js",
+      "default": "./dist/legacy/platform/services/project-runner/packageScripts.js"
+    },
+    "./legacy/platform/services/project-runner/types": {
+      "types": "./dist/legacy/platform/services/project-runner/types.d.ts",
+      "import": "./dist/legacy/platform/services/project-runner/types.js",
+      "default": "./dist/legacy/platform/services/project-runner/types.js"
+    },
+    "./legacy/platform/services/project-editor/editorOpener": {
+      "types": "./dist/legacy/platform/services/project-editor/editorOpener.d.ts",
+      "import": "./dist/legacy/platform/services/project-editor/editorOpener.js",
+      "default": "./dist/legacy/platform/services/project-editor/editorOpener.js"
+    },
+    "./legacy/platform/services/project-editor/types": {
+      "types": "./dist/legacy/platform/services/project-editor/types.d.ts",
+      "import": "./dist/legacy/platform/services/project-editor/types.js",
+      "default": "./dist/legacy/platform/services/project-editor/types.js"
+    },
+    "./legacy/platform/ui/fsWindow": {
+      "import": "./dist/legacy/platform/ui/fsWindow.js",
+      "default": "./dist/legacy/platform/ui/fsWindow.js"
+    },
+    "./legacy/platform/ui/common/taskLog": {
+      "types": "./dist/legacy/platform/ui/common/taskLog.d.ts",
+      "import": "./dist/legacy/platform/ui/common/taskLog.js",
+      "default": "./dist/legacy/platform/ui/common/taskLog.js"
+    },
+    "./legacy/platform/ui/common/useDragResize": {
+      "import": "./dist/legacy/platform/ui/common/useDragResize.js",
+      "default": "./dist/legacy/platform/ui/common/useDragResize.js"
+    },
+    "./legacy/platform/ui/common/FsWindow": {
+      "import": "./dist/legacy/platform/ui/common/FsWindow.vue",
+      "default": "./dist/legacy/platform/ui/common/FsWindow.vue"
+    },
+    "./legacy/platform/ui/common/FsWindow.vue": {
+      "import": "./dist/legacy/platform/ui/common/FsWindow.vue",
+      "default": "./dist/legacy/platform/ui/common/FsWindow.vue"
+    },
+    "./legacy/platform/ui/common/ForegroundTaskDialog": {
+      "import": "./dist/legacy/platform/ui/common/ForegroundTaskDialog.vue",
+      "default": "./dist/legacy/platform/ui/common/ForegroundTaskDialog.vue"
+    },
+    "./legacy/platform/ui/common/ForegroundTaskDialog.vue": {
+      "import": "./dist/legacy/platform/ui/common/ForegroundTaskDialog.vue",
+      "default": "./dist/legacy/platform/ui/common/ForegroundTaskDialog.vue"
+    },
+    "./legacy/platform/ui/common/OTabs": {
+      "import": "./dist/legacy/platform/ui/common/OTabs.vue",
+      "default": "./dist/legacy/platform/ui/common/OTabs.vue"
+    },
+    "./legacy/platform/ui/common/OTabs.vue": {
+      "import": "./dist/legacy/platform/ui/common/OTabs.vue",
+      "default": "./dist/legacy/platform/ui/common/OTabs.vue"
+    },
+    "./legacy/platform/ui/common/otabs": {
+      "types": "./dist/legacy/platform/ui/common/otabs.d.ts",
+      "import": "./dist/legacy/platform/ui/common/otabs.js",
+      "default": "./dist/legacy/platform/ui/common/otabs.js"
+    },
+    "./legacy/platform/ui/common/project-runner/terminal": {
+      "types": "./dist/legacy/platform/ui/common/project-runner/terminal.d.ts",
+      "import": "./dist/legacy/platform/ui/common/project-runner/terminal.js",
+      "default": "./dist/legacy/platform/ui/common/project-runner/terminal.js"
+    },
+    "./legacy/platform/ui/common/project-runner/themes": {
+      "types": "./dist/legacy/platform/ui/common/project-runner/themes.d.ts",
+      "import": "./dist/legacy/platform/ui/common/project-runner/themes.js",
+      "default": "./dist/legacy/platform/ui/common/project-runner/themes.js"
+    },
+    "./legacy/platform/ui/common/project-runner/ProjectRunButton": {
+      "import": "./dist/legacy/platform/ui/common/project-runner/ProjectRunButton.vue",
+      "default": "./dist/legacy/platform/ui/common/project-runner/ProjectRunButton.vue"
+    },
+    "./legacy/platform/ui/common/project-runner/ProjectRunButton.vue": {
+      "import": "./dist/legacy/platform/ui/common/project-runner/ProjectRunButton.vue",
+      "default": "./dist/legacy/platform/ui/common/project-runner/ProjectRunButton.vue"
+    },
+    "./legacy/platform/ui/common/project-runner/ProjectTerminalPanel": {
+      "import": "./dist/legacy/platform/ui/common/project-runner/ProjectTerminalPanel.vue",
+      "default": "./dist/legacy/platform/ui/common/project-runner/ProjectTerminalPanel.vue"
+    },
+    "./legacy/platform/ui/common/project-runner/ProjectTerminalPanel.vue": {
+      "import": "./dist/legacy/platform/ui/common/project-runner/ProjectTerminalPanel.vue",
+      "default": "./dist/legacy/platform/ui/common/project-runner/ProjectTerminalPanel.vue"
+    },
+    "./legacy/platform/ui/common/SplitResizeHandle": {
+      "import": "./dist/legacy/platform/ui/common/SplitResizeHandle.vue",
+      "default": "./dist/legacy/platform/ui/common/SplitResizeHandle.vue"
+    },
+    "./legacy/platform/ui/common/SplitResizeHandle.vue": {
+      "import": "./dist/legacy/platform/ui/common/SplitResizeHandle.vue",
+      "default": "./dist/legacy/platform/ui/common/SplitResizeHandle.vue"
+    },
+    "./legacy/platform/ui/common/EmbeddedChildWebview": {
+      "import": "./dist/legacy/platform/ui/common/EmbeddedChildWebview.vue",
+      "default": "./dist/legacy/platform/ui/common/EmbeddedChildWebview.vue"
+    },
+    "./legacy/platform/ui/common/EmbeddedChildWebview.vue": {
+      "import": "./dist/legacy/platform/ui/common/EmbeddedChildWebview.vue",
+      "default": "./dist/legacy/platform/ui/common/EmbeddedChildWebview.vue"
+    },
+    "./legacy/platform/ui/common/LocalTerminalView": {
+      "import": "./dist/legacy/platform/ui/common/LocalTerminalView.vue",
+      "default": "./dist/legacy/platform/ui/common/LocalTerminalView.vue"
+    },
+    "./legacy/platform/ui/common/LocalTerminalView.vue": {
+      "import": "./dist/legacy/platform/ui/common/LocalTerminalView.vue",
+      "default": "./dist/legacy/platform/ui/common/LocalTerminalView.vue"
+    },
+    "./legacy/platform/ui/common/CodeMirrorTextEditor": {
+      "import": "./dist/legacy/platform/ui/common/CodeMirrorTextEditor.vue",
+      "default": "./dist/legacy/platform/ui/common/CodeMirrorTextEditor.vue"
+    },
+    "./legacy/platform/ui/common/CodeMirrorTextEditor.vue": {
+      "import": "./dist/legacy/platform/ui/common/CodeMirrorTextEditor.vue",
+      "default": "./dist/legacy/platform/ui/common/CodeMirrorTextEditor.vue"
+    },
+    "./legacy/platform/ui/common/SshConnectionSettings": {
+      "import": "./dist/legacy/platform/ui/common/SshConnectionSettings.vue",
+      "default": "./dist/legacy/platform/ui/common/SshConnectionSettings.vue"
+    },
+    "./legacy/platform/ui/common/SshConnectionSettings.vue": {
+      "import": "./dist/legacy/platform/ui/common/SshConnectionSettings.vue",
+      "default": "./dist/legacy/platform/ui/common/SshConnectionSettings.vue"
+    },
+    "./legacy/platform/ui/common/VditorEditor": {
+      "import": "./dist/legacy/platform/ui/common/VditorEditor.vue",
+      "default": "./dist/legacy/platform/ui/common/VditorEditor.vue"
+    },
+    "./legacy/platform/ui/common/VditorEditor.vue": {
+      "import": "./dist/legacy/platform/ui/common/VditorEditor.vue",
+      "default": "./dist/legacy/platform/ui/common/VditorEditor.vue"
+    },
+    "./legacy/platform/ui/common/ai/AiChatPanel": {
+      "import": "./dist/legacy/platform/ui/common/ai/AiChatPanel.vue",
+      "default": "./dist/legacy/platform/ui/common/ai/AiChatPanel.vue"
+    },
+    "./legacy/platform/ui/common/ai/AiChatPanel.vue": {
+      "import": "./dist/legacy/platform/ui/common/ai/AiChatPanel.vue",
+      "default": "./dist/legacy/platform/ui/common/ai/AiChatPanel.vue"
+    },
+    "./legacy/platform/ui/tools/common": {
+      "types": "./dist/legacy/platform/ui/tools/common.d.ts",
+      "import": "./dist/legacy/platform/ui/tools/common.js",
+      "default": "./dist/legacy/platform/ui/tools/common.js"
+    },
+    "./legacy/platform/ui/tools/Config": {
+      "import": "./dist/legacy/platform/ui/tools/Config.vue",
+      "default": "./dist/legacy/platform/ui/tools/Config.vue"
+    },
+    "./legacy/platform/ui/tools/Config.vue": {
+      "import": "./dist/legacy/platform/ui/tools/Config.vue",
+      "default": "./dist/legacy/platform/ui/tools/Config.vue"
+    },
+    "./legacy/plugins/term/ui/TerminalView": {
+      "import": "./dist/legacy/plugins/term/ui/TerminalView.vue",
+      "default": "./dist/legacy/plugins/term/ui/TerminalView.vue"
+    },
+    "./legacy/plugins/term/ui/TerminalView.vue": {
+      "import": "./dist/legacy/plugins/term/ui/TerminalView.vue",
+      "default": "./dist/legacy/plugins/term/ui/TerminalView.vue"
+    },
+    "./legacy/plugins/term/ui/themes": {
+      "import": "./dist/legacy/plugins/term/ui/themes.js",
+      "default": "./dist/legacy/plugins/term/ui/themes.js"
+    },
+    "./legacy/assets/dbm/*": "./dist/legacy/assets/dbm/*",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/farion1231"
+  },
+  "peerDependenciesMeta": {
+    "@tauri-apps/api": {
+      "optional": false
+    }
+  },
+  "scripts": {
+    "build": "vite build && node scripts/copy-legacy-ui-assets.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.3.0",
+    "vite-plugin-dts": "^4.5.4",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,20 @@
+import { OToolsAPI, OToolsPlatform } from './otools-globals';
+import { createOtoolsNativeEventClient } from './remote-service-otools-web-ws-shim';
+type PostJson = <T = unknown>(path: string, body?: unknown) => Promise<T>;
+export type OtoolsWebRuntimeOptions = {
+    appName?: string;
+    appVersion?: string;
+    baseUrl?: string;
+    eventClient?: ReturnType<typeof createOtoolsNativeEventClient>;
+    fetchImpl?: typeof fetch;
+    isDev?: boolean;
+    platform?: OToolsPlatform | string;
+    pluginUuid?: string;
+    postJson?: PostJson;
+    token?: string;
+    WebSocketImpl?: typeof WebSocket;
+    wsUrl?: string;
+};
+export declare function createOtoolsWebFacade(options: OtoolsWebRuntimeOptions): OToolsAPI;
+export declare function installOtoolsWebRuntime(options: OtoolsWebRuntimeOptions): OToolsAPI;
+export {};

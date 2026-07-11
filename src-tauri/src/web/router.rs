@@ -265,6 +265,10 @@ pub fn build_router(
             post(handlers::otools::otools_list_plugins),
         )
         .route(
+            "/otools-noder/invoke",
+            post(handlers::otools_noder::invoke),
+        )
+        .route(
             "/otools_get_all_plugins",
             post(handlers::otools::otools_get_all_plugins),
         )
@@ -276,6 +280,88 @@ pub fn build_router(
         .route(
             "/otools_show_main_window",
             post(handlers::otools::otools_show_main_window),
+        )
+        .route("/show_main_window", post(handlers::otools::show_main_window))
+        .route("/enable_remote_ui", post(handlers::otools::enable_remote_ui))
+        .route(
+            "/disable_remote_ui",
+            post(handlers::otools::disable_remote_ui),
+        )
+        .route(
+            "/remote_service_status",
+            post(handlers::otools::remote_service_status),
+        )
+        .route(
+            "/otools_request_app_exit",
+            post(handlers::otools::otools_request_app_exit),
+        )
+        .route(
+            "/otools_get_launch_at_startup",
+            post(handlers::otools::otools_get_launch_at_startup),
+        )
+        .route(
+            "/otools_set_launch_at_startup",
+            post(handlers::otools::otools_set_launch_at_startup),
+        )
+        .route(
+            "/otools_get_global_shortcut_bindings",
+            post(handlers::otools::otools_get_global_shortcut_bindings),
+        )
+        .route(
+            "/otools_get_global_shortcut_binding",
+            post(handlers::otools::otools_get_global_shortcut_binding),
+        )
+        .route(
+            "/otools_upsert_global_shortcut_binding",
+            post(handlers::otools::otools_upsert_global_shortcut_binding),
+        )
+        .route(
+            "/otools_remove_global_shortcut_binding",
+            post(handlers::otools::otools_remove_global_shortcut_binding),
+        )
+        .route(
+            "/create_tools_tab_window",
+            post(handlers::otools::create_tools_tab_window),
+        )
+        .route(
+            "/create_embedded_webview",
+            post(handlers::otools::create_embedded_webview),
+        )
+        .route(
+            "/close_tools_tab_window",
+            post(handlers::otools::close_tools_tab_window),
+        )
+        .route(
+            "/close_embedded_webview",
+            post(handlers::otools::close_embedded_webview),
+        )
+        .route(
+            "/switch_and_position_tools_windows",
+            post(handlers::otools::switch_and_position_tools_windows),
+        )
+        .route(
+            "/switch_and_position_embedded_webviews",
+            post(handlers::otools::switch_and_position_embedded_webviews),
+        )
+        .route(
+            "/set_tools_loading_state",
+            post(handlers::otools::set_tools_loading_state),
+        )
+        .route(
+            "/tools_tab_exists",
+            post(handlers::otools::tools_tab_exists),
+        )
+        .route(
+            "/embedded_webview_exists",
+            post(handlers::otools::embedded_webview_exists),
+        )
+        .route(
+            "/tools_sync_child_webview_theme",
+            post(handlers::otools::tools_sync_child_webview_theme),
+        )
+        .route(
+            "/tools_sync_child_webview_locale",
+            post(handlers::otools::tools_sync_child_webview_locale),
         )
         .route(
             "/project_editor_open",
@@ -475,6 +561,30 @@ pub fn build_router(
             post(handlers::otools::native_plugin_poll_events),
         )
         .route(
+            "/native_plugin_listen_acquire",
+            post(handlers::otools::native_plugin_listen_acquire),
+        )
+        .route(
+            "/native_plugin_listen_release",
+            post(handlers::otools::native_plugin_listen_release),
+        )
+        .route(
+            "/connect_ssh_server",
+            post(handlers::otools::connect_ssh_server),
+        )
+        .route(
+            "/send_ssh_input",
+            post(handlers::otools::send_ssh_input),
+        )
+        .route(
+            "/disconnect_ssh_server",
+            post(handlers::otools::disconnect_ssh_server),
+        )
+        .route(
+            "/is_ssh_connected",
+            post(handlers::otools::is_ssh_connected),
+        )
+        .route(
             "/otools_poll_events",
             post(handlers::otools::otools_poll_events),
         )
@@ -568,6 +678,70 @@ pub fn build_router(
             post(handlers::otools::tools_webview_read_file),
         )
         .route(
+            "/tools_webview_pick_files",
+            post(handlers::otools::tools_webview_pick_files),
+        )
+        .route(
+            "/tools_webview_pick_save_path",
+            post(handlers::otools::tools_webview_pick_save_path),
+        )
+        .route(
+            "/tools_webview_pick_folder",
+            post(handlers::otools::tools_webview_pick_folder),
+        )
+        .route(
+            "/remote_service_pick_files",
+            post(handlers::otools::remote_service_pick_files),
+        )
+        .route(
+            "/remote_service_read_file",
+            post(handlers::otools::remote_service_read_file),
+        )
+        .route(
+            "/remote_service_pick_save_path",
+            post(handlers::otools::remote_service_pick_save_path),
+        )
+        .route(
+            "/remote_service_pick_folder",
+            post(handlers::otools::remote_service_pick_folder),
+        )
+        .route(
+            "/remote_service_write_file",
+            post(handlers::otools::remote_service_write_file),
+        )
+        .route(
+            "/remote_service_list_dir",
+            post(handlers::otools::remote_service_list_dir),
+        )
+        .route(
+            "/remote_service_browse_dialog",
+            post(handlers::otools::remote_service_browse_dialog),
+        )
+        .route(
+            "/remote_service_home_dir",
+            post(handlers::otools::remote_service_home_dir),
+        )
+        .route(
+            "/remote_service_join_path",
+            post(handlers::otools::remote_service_join_path),
+        )
+        .route(
+            "/remote_service_create_dir",
+            post(handlers::otools::remote_service_create_dir),
+        )
+        .route(
+            "/remote_service_touch_file",
+            post(handlers::otools::remote_service_touch_file),
+        )
+        .route(
+            "/remote_service_remove_entry",
+            post(handlers::otools::remote_service_remove_entry),
+        )
+        .route(
+            "/remote_service_rename_entry",
+            post(handlers::otools::remote_service_rename_entry),
+        )
+        .route(
             "/tools_webview_file_meta",
             post(handlers::otools::tools_webview_file_meta),
         )
@@ -643,21 +817,46 @@ pub fn build_router(
             "/otools_shell_open_path",
             post(handlers::otools::otools_shell_open_path),
         )
+        .route("/open_directory", post(handlers::otools::open_directory))
+        .route(
+            "/remote_service_shell_open",
+            post(handlers::otools::remote_service_shell_open),
+        )
+        .route(
+            "/remote_service_shell_open_path",
+            post(handlers::otools::remote_service_shell_open_path),
+        )
         .route(
             "/otools_shell_show_item_in_folder",
             post(handlers::otools::otools_shell_show_item_in_folder),
+        )
+        .route(
+            "/remote_service_shell_show_item_in_folder",
+            post(handlers::otools::remote_service_shell_show_item_in_folder),
         )
         .route(
             "/otools_shell_trash_item",
             post(handlers::otools::otools_shell_trash_item),
         )
         .route(
+            "/remote_service_shell_trash_item",
+            post(handlers::otools::remote_service_shell_trash_item),
+        )
+        .route(
             "/otools_shell_open_external",
             post(handlers::otools::otools_shell_open_external),
         )
         .route(
+            "/remote_service_shell_open_external",
+            post(handlers::otools::remote_service_shell_open_external),
+        )
+        .route(
             "/otools_shell_beep",
             post(handlers::otools::otools_shell_beep),
+        )
+        .route(
+            "/remote_service_shell_beep",
+            post(handlers::otools::remote_service_shell_beep),
         )
         .route(
             "/otools_show_notification",

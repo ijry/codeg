@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use otools_platform_process::new_background_command;
 use std::collections::HashMap;
 use std::env;
 #[cfg(target_os = "linux")]
@@ -69,16 +70,6 @@ struct HostCommandResult {
     command: String,
     stdout: String,
     stderr: String,
-}
-
-fn new_background_command(program: &str) -> std::process::Command {
-    let mut command = std::process::Command::new(program);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    command
 }
 
 #[cfg(target_os = "linux")]

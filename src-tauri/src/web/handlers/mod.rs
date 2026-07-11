@@ -19,6 +19,7 @@ pub mod model_provider;
 pub mod office_tools;
 pub mod office_watch_proxy;
 pub mod otools;
+pub mod otools_noder;
 pub mod pet;
 pub mod project_boot;
 pub mod question;

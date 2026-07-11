@@ -1,0 +1,8 @@
+[package]
+name = "otools-plugin-dev-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-plugin-dev-state = { path = "../state" }
+serde = { version = "1", features = ["derive"] }

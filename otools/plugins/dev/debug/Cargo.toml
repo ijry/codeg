@@ -1,0 +1,10 @@
+[package]
+name = "otools-plugin-dev-debug"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otools-core = { path = "../../../core" }
+otools-plugin-dev-preview = { path = "../preview" }
+otools-plugin-dev-state = { path = "../state" }
+serde_json = "1"
