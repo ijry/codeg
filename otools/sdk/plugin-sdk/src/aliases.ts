@@ -16,6 +16,17 @@ export function createOtoolsAliasMap() {
     "@tauri-apps/plugin-updater": "otools-plugin-sdk/tauri-plugin-updater-shim",
     "@tauri-apps/plugin-notification":
       "otools-plugin-sdk/tauri-plugin-notification-shim",
+    buffer: "otools-plugin-sdk/node-buffer-shim",
+    "node:buffer": "otools-plugin-sdk/node-buffer-shim",
+    events: "otools-plugin-sdk/node-events-shim",
+    "node:events": "otools-plugin-sdk/node-events-shim",
+    "electron/common": "otools-plugin-sdk/electron-shim",
+    "electron/main": "otools-plugin-sdk/electron-shim",
+    "electron/remote": "otools-plugin-sdk/electron-remote-shim",
+    "electron/renderer": "otools-plugin-sdk/electron-shim",
+    electron: "otools-plugin-sdk/electron-shim",
+    "@electron/remote/main": "otools-plugin-sdk/electron-remote-main-shim",
+    "@electron/remote": "otools-plugin-sdk/electron-remote-shim",
     "tauri-remote-service/otools-web":
       "otools-plugin-sdk/remote-service-otools-web-shim",
     "tauri-remote-service/otools-web/ws":
@@ -32,6 +43,23 @@ export function createOtoolsAliasMap() {
       "otools-plugin-sdk/remote-service-compat-path-shim",
     "tauri-remote-service/compat/shell":
       "otools-plugin-sdk/remote-service-compat-shell-shim",
+    "path/posix": "otools-plugin-sdk/node-path-posix-shim",
+    "node:path/posix": "otools-plugin-sdk/node-path-posix-shim",
+    "path/win32": "otools-plugin-sdk/node-path-win32-shim",
+    "node:path/win32": "otools-plugin-sdk/node-path-win32-shim",
+    path: "otools-plugin-sdk/node-path-shim",
+    "node:path": "otools-plugin-sdk/node-path-shim",
+    "process/browser": "otools-plugin-sdk/node-process-shim",
+    process: "otools-plugin-sdk/node-process-shim",
+    "node:process": "otools-plugin-sdk/node-process-shim",
+    os: "otools-plugin-sdk/node-os-shim",
+    "node:os": "otools-plugin-sdk/node-os-shim",
+    querystring: "otools-plugin-sdk/node-querystring-shim",
+    "node:querystring": "otools-plugin-sdk/node-querystring-shim",
+    "util/types": "otools-plugin-sdk/node-util-types-shim",
+    "node:util/types": "otools-plugin-sdk/node-util-types-shim",
+    util: "otools-plugin-sdk/node-util-shim",
+    "node:util": "otools-plugin-sdk/node-util-shim",
     "tauri-remote-service/host/fs":
       "otools-plugin-sdk/remote-service-host-fs-shim",
     "tauri-remote-service/host/shell":

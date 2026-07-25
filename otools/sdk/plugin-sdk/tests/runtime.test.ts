@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { transformCallback } from "../src/tauri-core-shim";
 import { invoke, listen } from "../src/runtime";
 import { confirm, open as openDialog } from "../src/tauri-plugin-dialog-shim";
+import { createOtoolsWebFacade } from "../src/remote-service-otools-web-shim";
+
+const createEventClient = () => ({
+  listen: async () => async () => undefined,
+  close: () => undefined,
+  getConnectionState: () => "idle" as const,
+});
 
 describe("otools runtime bridge", () => {
   beforeEach(() => {
@@ -100,6 +107,59 @@ describe("otools runtime bridge", () => {
       payload: { topic: "acp://event", payload: { seq: 2 } },
     });
     expect(seen).toEqual([1]);
+  });
+
+  it("delivers native plugin event labels to tauri-style listeners", async () => {
+    let nativeHandler:
+      | ((
+          event: {
+            payload: {
+              pluginUuid?: string;
+              topic: string;
+              payload: unknown;
+            };
+          },
+        ) => void)
+      | undefined;
+
+    (window as Window & { otools?: unknown }).otools = {
+      invokeNative: vi.fn(),
+      listenNative: vi.fn(
+        async (
+          handler: (event: {
+            payload: {
+              pluginUuid?: string;
+              topic: string;
+              payload: unknown;
+            };
+          }) => void,
+        ) => {
+          nativeHandler = handler;
+          return async () => {};
+        },
+      ),
+    };
+
+    const seen: unknown[] = [];
+    const unlisten = await listen("otools-native:demo-plugin", (event) => {
+      seen.push(event.payload);
+    });
+
+    nativeHandler?.({
+      payload: {
+        pluginUuid: "demo-plugin",
+        topic: "config-changed",
+        payload: { seq: 1 },
+      },
+    });
+
+    await unlisten();
+    expect(seen).toEqual([
+      {
+        topic: "config-changed",
+        payload: { seq: 1 },
+      },
+    ]);
   });
 
   it("prefers host dialog APIs when available", async () => {
@@ -229,5 +289,45 @@ describe("otools runtime bridge", () => {
       "sample_get_status",
       null,
     );
+  });
+
+  it("routes native_plugin host commands through the web facade transport", async () => {
+    const calls: Array<{ path: string; body?: unknown }> = [];
+    (window as Window & { otools?: unknown }).otools = createOtoolsWebFacade({
+      eventClient: createEventClient(),
+      pluginUuid: "dev-debug:sample-plugin",
+      postJson: async (path, body) => {
+        calls.push({ path, body });
+        return { ok: true };
+      },
+    });
+
+    await invoke("native_plugin_invoke", {
+      pluginUuid: "market:target-plugin",
+      method: "ping",
+      payload: { seq: 1 },
+    });
+    await invoke("native_plugin_listen_acquire", {
+      uuid: "market:target-plugin",
+      intervalMs: 250,
+    });
+
+    expect(calls).toEqual([
+      {
+        path: "/api/native_plugin_invoke",
+        body: {
+          uuid: "target-plugin",
+          method: "ping",
+          payload: { seq: 1 },
+        },
+      },
+      {
+        path: "/api/native_plugin_listen_acquire",
+        body: {
+          uuid: "target-plugin",
+          intervalMs: 250,
+        },
+      },
+    ]);
   });
 });

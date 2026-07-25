@@ -31,6 +31,21 @@ describe("otools vite config helper", () => {
         "@tauri-apps/api/dpi": "otools-plugin-sdk/tauri-dpi-shim",
         "@tauri-apps/api/webviewWindow":
           "otools-plugin-sdk/tauri-webview-window-shim",
+        buffer: "otools-plugin-sdk/node-buffer-shim",
+        events: "otools-plugin-sdk/node-events-shim",
+        electron: "otools-plugin-sdk/electron-shim",
+        "@electron/remote": "otools-plugin-sdk/electron-remote-shim",
+        "@electron/remote/main":
+          "otools-plugin-sdk/electron-remote-main-shim",
+        path: "otools-plugin-sdk/node-path-shim",
+        "path/posix": "otools-plugin-sdk/node-path-posix-shim",
+        "path/win32": "otools-plugin-sdk/node-path-win32-shim",
+        process: "otools-plugin-sdk/node-process-shim",
+        "process/browser": "otools-plugin-sdk/node-process-shim",
+        os: "otools-plugin-sdk/node-os-shim",
+        querystring: "otools-plugin-sdk/node-querystring-shim",
+        util: "otools-plugin-sdk/node-util-shim",
+        "util/types": "otools-plugin-sdk/node-util-types-shim",
         "tauri-remote-service": "otools-plugin-sdk/remote-service-shim",
         "tauri-remote-service/otools-web/ws":
           "otools-plugin-sdk/remote-service-otools-web-ws-shim",
@@ -102,6 +117,21 @@ describe("otools vite config helper", () => {
     );
     expect(aliasKeys.indexOf("tauri-remote-service/api/core")).toBeLessThan(
       aliasKeys.indexOf("tauri-remote-service"),
+    );
+    expect(aliasKeys.indexOf("electron/renderer")).toBeLessThan(
+      aliasKeys.indexOf("electron"),
+    );
+    expect(aliasKeys.indexOf("@electron/remote/main")).toBeLessThan(
+      aliasKeys.indexOf("@electron/remote"),
+    );
+    expect(aliasKeys.indexOf("path/posix")).toBeLessThan(
+      aliasKeys.indexOf("path"),
+    );
+    expect(aliasKeys.indexOf("process/browser")).toBeLessThan(
+      aliasKeys.indexOf("process"),
+    );
+    expect(aliasKeys.indexOf("util/types")).toBeLessThan(
+      aliasKeys.indexOf("util"),
     );
   });
 });

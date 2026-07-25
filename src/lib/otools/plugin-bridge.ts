@@ -987,13 +987,7 @@ async function loadPluginAssetText(
     const asset = await getOtoolsPluginAsset(pluginUuid, assetPath)
     return asset.text ?? decodeBase64Text(asset.dataBase64)
   } catch {
-    const response = await fetch(fallbackUrl, {
-      credentials: "same-origin",
-    })
-    if (!response.ok) {
-      throw new Error(`Failed to load plugin entry (${response.status})`)
-    }
-    return response.text()
+    return fetchPluginTextWithHostFallback(fallbackUrl, "plugin entry")
   }
 }
 
@@ -1050,16 +1044,67 @@ async function tryLoadPluginAssetText(
   }
 
   try {
-    const response = await fetch(fallbackUrl, {
-      credentials: "same-origin",
-    })
-    if (!response.ok) {
-      return null
-    }
-    return response.text()
+    return await fetchPluginTextWithHostFallback(fallbackUrl, "plugin preload")
   } catch {
     return null
   }
+}
+
+async function fetchPluginTextWithHostFallback(
+  url: string,
+  label: string
+): Promise<string> {
+  try {
+    const response = await fetch(url, {
+      credentials: "same-origin",
+    })
+    if (response.ok) {
+      return response.text()
+    }
+    const hostText = await fetchPluginTextViaHostHttp(url)
+    if (hostText !== null) {
+      return hostText
+    }
+    throw new Error(`Failed to load ${label} (${response.status})`)
+  } catch (error) {
+    const hostText = await fetchPluginTextViaHostHttp(url)
+    if (hostText !== null) {
+      return hostText
+    }
+    throw error
+  }
+}
+
+async function fetchPluginTextViaHostHttp(url: string): Promise<string | null> {
+  if (!/^https?:\/\//i.test(String(url || "").trim())) {
+    return null
+  }
+
+  try {
+    const response = await getTransport().call<Record<string, unknown>>(
+      "otools_host_http_send",
+      {
+        followRedirects: true,
+        method: "GET",
+        timeoutSecs: 30,
+        url,
+      }
+    )
+    const status = Number(response.status)
+    if (!Number.isFinite(status) || status < 200 || status >= 300) {
+      return null
+    }
+    const bodyText = response.bodyText ?? response.body_text
+    if (typeof bodyText === "string") {
+      return bodyText
+    }
+    const bodyBase64 = response.bodyBase64 ?? response.body_base64
+    if (typeof bodyBase64 === "string" && bodyBase64) {
+      return decodeBase64Text(bodyBase64)
+    }
+  } catch {}
+
+  return null
 }
 
 function resolvePluginPreloadFallbackUrl(
@@ -1236,7 +1281,7 @@ export async function dispatchOtoolsCommand(
   }
 
   if (command.startsWith("plugin:")) {
-    const handled = dispatchTauriPluginCompatCommand(command, payload)
+    const handled = dispatchTauriPluginCompatCommand(command)
     if (handled.handled) {
       return handled.value
     }
@@ -1537,6 +1582,35 @@ export async function dispatchOtoolsCommand(
       } catch {}
       window.focus()
       return
+    case "hide_main_window":
+    case "otools_hide_main_window":
+      if (canUseLocalDesktopHost()) {
+        try {
+          return await getShellTransport().call("hide_main_window")
+        } catch {}
+      }
+      await hideCurrentOtoolsWindow(payload)
+      return
+    case "out_plugin":
+    case "outPlugin":
+      await hideCurrentOtoolsWindow(payload)
+      return
+    case "set_expend_height": {
+      const height = readNumberField(payload, "height", 0)
+      if (Number.isFinite(height) && height > 0) {
+        document.body.style.minHeight = `${Math.round(height)}px`
+      }
+      return true
+    }
+    case "redirect":
+      dispatchHostCustomEvent("otools:redirect", {
+        code: readStringField(payload, "code"),
+        payload: asRecord(payload)?.payload ?? null,
+      })
+      return true
+    case "set_feature":
+    case "remove_feature":
+      return true
     case "project_editor_open":
       return getTransport().call("project_editor_open", asRecord(payload) ?? {})
     case "project_runner_open_in_terminal":
@@ -2158,8 +2232,7 @@ async function dispatchTauriGlobalShortcutCommand(
 }
 
 function dispatchTauriPluginCompatCommand(
-  command: string,
-  payload: unknown
+  command: string
 ): { handled: boolean; value?: unknown } {
   if (command === "plugin:resources|close") {
     return { handled: true }
@@ -2503,7 +2576,7 @@ function serializeScriptArg(value: unknown): string {
 function runOtoolsPluginPreload(source: string, filename: string) {
   const safeFilename = String(filename || "preload.js")
   const sourceUrl = safeFilename.replace(/[\r\n]/g, " ")
-  const module = { exports: {} }
+  const preloadModule = { exports: {} }
   const dirname = sourceUrl.includes("/")
     ? sourceUrl.slice(0, sourceUrl.lastIndexOf("/"))
     : ""
@@ -2549,9 +2622,9 @@ function runOtoolsPluginPreload(source: string, filename: string) {
     "global",
     `${source}\n//# sourceURL=${sourceUrl}`
   )(
-    module.exports,
+    preloadModule.exports,
     requireCompat,
-    module,
+    preloadModule,
     safeFilename,
     dirname,
     null,
@@ -2614,6 +2687,7 @@ function otoolsCompatBootstrap(config: {
   appVersion: string
   currentFolderPath?: string
   currentBrowserUrl: string
+  enterAction?: unknown
   isDev?: boolean
   initialLocaleSync?: {
     locale?: string | null
@@ -2914,6 +2988,14 @@ function otoolsCompatBootstrap(config: {
     const fromEnv = normalizePluginUuid(env.pluginUuid)
     if (fromEnv) return fromEnv
     return resolvePluginUuidFromLocation()
+  }
+
+  const normalizeNativeUuidPayload = (payload) => {
+    const record = payload && typeof payload === "object" ? { ...payload } : {}
+    record.uuid = resolvePluginUuid(
+      record.uuid || record.pluginUuid || record.plugin_uuid || record.plugin
+    )
+    return record
   }
 
   const normalizeStateScheme = (scheme) => {
@@ -3609,7 +3691,8 @@ function otoolsCompatBootstrap(config: {
 
     switch (command) {
       case "native_plugin_invoke": {
-        const method = toStringSafe(payload && payload.method).trim()
+        const normalizedPayload = normalizeNativeUuidPayload(payload)
+        const method = toStringSafe(normalizedPayload.method).trim()
         if (method === "get_init_error") {
           return null
         }
@@ -3617,18 +3700,21 @@ function otoolsCompatBootstrap(config: {
           return true
         }
         if (OTOOLS_POPUP_COMMANDS.has(method)) {
-          return invokeOtoolsPopupCommand(method, payload?.payload ?? {})
+          return invokeOtoolsPopupCommand(method, normalizedPayload.payload ?? {})
         }
-        return postInvoke(command, payload ?? {})
+        return postInvoke(command, normalizedPayload)
       }
+      case "native_plugin_probe":
+      case "native_plugin_reload":
+      case "native_plugin_poll_events":
+        return postInvoke(command, normalizeNativeUuidPayload(payload))
       case "native_plugin_listen_acquire": {
-        const targetUuid = retainNativePluginPoll(
-          payload && (payload.uuid || payload.pluginUuid || payload.plugin)
-        )
+        const normalizedPayload = normalizeNativeUuidPayload(payload)
+        const targetUuid = retainNativePluginPoll(normalizedPayload.uuid)
         if (targetUuid) {
           try {
             releaseNativePluginPoll(targetUuid)
-            return await postInvoke(command, payload ?? {})
+            return await postInvoke(command, normalizedPayload)
           } catch {
             retainNativePluginPoll(targetUuid)
           }
@@ -3640,12 +3726,13 @@ function otoolsCompatBootstrap(config: {
         }
       }
       case "native_plugin_listen_release":
-        try {
-          return await postInvoke(command, payload ?? {})
-        } catch {
-          releaseNativePluginPoll(
-            payload && (payload.uuid || payload.pluginUuid || payload.plugin)
-          )
+        {
+          const normalizedPayload = normalizeNativeUuidPayload(payload)
+          try {
+            return await postInvoke(command, normalizedPayload)
+          } catch {
+            releaseNativePluginPoll(normalizedPayload.uuid)
+          }
         }
         return {
           ok: true,
@@ -4383,7 +4470,8 @@ function otoolsCompatBootstrap(config: {
     })
   }
 
-  const permissions = Array.isArray(env.pluginPermissions)
+  const permissionsRestricted = Array.isArray(env.pluginPermissions)
+  const permissions = permissionsRestricted
     ? env.pluginPermissions.map((item) => toStringSafe(item).trim()).filter(Boolean)
     : []
   const fileIconCache =
@@ -4398,24 +4486,511 @@ function otoolsCompatBootstrap(config: {
   const permissionSet = new Set(permissions.map((item) => item.toLowerCase()))
   const hasPermission = (name) => {
     const key = toStringSafe(name).trim().toLowerCase()
-    return !key || permissionSet.has(key) || permissionSet.has("*")
+    return (
+      !key ||
+      !permissionsRestricted ||
+      permissionSet.has(key) ||
+      permissionSet.has("*")
+    )
+  }
+  const resolveNoderRuntime = () =>
+    window.__OTOOLS_NODER__ && typeof window.__OTOOLS_NODER__ === "object"
+      ? window.__OTOOLS_NODER__
+      : null
+  const readNoderBuiltinModules = () => {
+    const modules = resolveNoderRuntime()?.getSdkModules?.()
+    const builtins = modules?.runtime?.builtinModules
+    return Array.isArray(builtins) ? [...builtins] : []
   }
   const nodeRequire = (specifier) => {
+    const noderRequire = resolveNoderRuntime()?.require
+    if (typeof noderRequire === "function") {
+      return noderRequire(specifier)
+    }
     throw new Error(
       `Node require is unavailable in the codeg-plus OTools web runtime: ${toStringSafe(
         specifier
       )}`
     )
   }
-  nodeRequire.resolve = (specifier) => toStringSafe(specifier)
+  nodeRequire.resolve = (specifier) => {
+    const noderRequire = resolveNoderRuntime()?.require
+    return typeof noderRequire?.resolve === "function"
+      ? noderRequire.resolve(specifier)
+      : toStringSafe(specifier)
+  }
   nodeRequire.cache = {}
-  const createRequire = () => nodeRequire
+  const createRequire = (filename) => {
+    const noderCreateRequire = resolveNoderRuntime()?.createRequire
+    return typeof noderCreateRequire === "function"
+      ? noderCreateRequire(filename)
+      : nodeRequire
+  }
   const tauriPathInternals = {
     sep: currentPlatform === "windows" ? "\\" : "/",
     delimiter: currentPlatform === "windows" ? ";" : ":",
   }
+  const localStorageApi = (() => {
+    try {
+      return window.localStorage || null
+    } catch {
+      return null
+    }
+  })()
+  const encodeCompatStorageValue = (value) => {
+    try {
+      return JSON.stringify({ value })
+    } catch {
+      return JSON.stringify({ value: toStringSafe(value) })
+    }
+  }
+  const decodeCompatStorageValue = (raw) => {
+    if (raw === null || raw === undefined) {
+      return null
+    }
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === "object" && "value" in parsed) {
+        return parsed.value ?? null
+      }
+      return parsed
+    } catch {
+      return raw
+    }
+  }
+  const readJsonParam = (value) => {
+    if (!value) {
+      return null
+    }
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
+  }
+  const normalizeEnterAction = (value, fallback) => {
+    const record = value && typeof value === "object" ? value : {}
+    if (!Object.keys(record).length) {
+      return { ...fallback }
+    }
+    return {
+      ...record,
+      code: toStringSafe(record.code || record.cmd || record.featureCode).trim(),
+      type: toStringSafe(record.type),
+      payload: "payload" in record ? record.payload : null,
+      option: "option" in record ? record.option : null,
+    }
+  }
+  const readSubInputText = (value) => {
+    const record = value && typeof value === "object" ? value : {}
+    if ("text" in record) {
+      return toStringSafe(record.text)
+    }
+    if ("value" in record) {
+      return toStringSafe(record.value)
+    }
+    return toStringSafe(value)
+  }
+  const storagePluginId = resolvePluginUuid(pluginUuid) || "anonymous"
+  const dbStoragePrefix = `otools:${storagePluginId}:dbStorage:`
+  const dbDocumentPrefix = `otools:${storagePluginId}:db:`
+  const memoryDbStorage = new Map()
+  const memoryDbDocuments = new Map()
+  const listCompatStorageKeys = (prefix, memory) => {
+    const keys = new Set(memory.keys())
+    if (localStorageApi) {
+      for (let index = 0; index < localStorageApi.length; index += 1) {
+        const key = localStorageApi.key(index)
+        if (key?.startsWith(prefix)) {
+          keys.add(key.slice(prefix.length))
+        }
+      }
+    }
+    return Array.from(keys).sort()
+  }
+  const readCompatStorageValue = (prefix, memory, key) => {
+    const storageKey = toStringSafe(key)
+    if (memory.has(storageKey)) {
+      return memory.get(storageKey) ?? null
+    }
+    const raw = localStorageApi?.getItem(`${prefix}${storageKey}`) ?? null
+    const value = decodeCompatStorageValue(raw)
+    if (raw !== null) {
+      memory.set(storageKey, value)
+    }
+    return value
+  }
+  const writeCompatStorageValue = (prefix, memory, key, value) => {
+    const storageKey = toStringSafe(key)
+    memory.set(storageKey, value)
+    localStorageApi?.setItem(
+      `${prefix}${storageKey}`,
+      encodeCompatStorageValue(value)
+    )
+  }
+  const removeCompatStorageValue = (prefix, memory, key) => {
+    const storageKey = toStringSafe(key)
+    memory.delete(storageKey)
+    localStorageApi?.removeItem(`${prefix}${storageKey}`)
+  }
+  const clearCompatStorageValues = (prefix, memory) => {
+    for (const key of listCompatStorageKeys(prefix, memory)) {
+      localStorageApi?.removeItem(`${prefix}${key}`)
+    }
+    memory.clear()
+  }
+  const mirrorDbStorageValue = (key, value) => {
+    if (!storagePluginId || storagePluginId === "anonymous") {
+      return
+    }
+    void tauriInvoke("save_otools_plugin_localstate_value_with_scheme", {
+      plugin: storagePluginId,
+      scheme: "dbStorage",
+      key,
+      value,
+    }).catch(() => {})
+  }
+  const dbStorage = {
+    get length() {
+      return listCompatStorageKeys(dbStoragePrefix, memoryDbStorage).length
+    },
+    key(index) {
+      return listCompatStorageKeys(dbStoragePrefix, memoryDbStorage)[index] ?? null
+    },
+    getItem(key) {
+      return readCompatStorageValue(dbStoragePrefix, memoryDbStorage, key)
+    },
+    setItem(key, value) {
+      const storageKey = toStringSafe(key)
+      writeCompatStorageValue(dbStoragePrefix, memoryDbStorage, storageKey, value)
+      mirrorDbStorageValue(storageKey, value)
+    },
+    removeItem(key) {
+      const storageKey = toStringSafe(key)
+      removeCompatStorageValue(dbStoragePrefix, memoryDbStorage, storageKey)
+      mirrorDbStorageValue(storageKey, null)
+    },
+    clear() {
+      clearCompatStorageValues(dbStoragePrefix, memoryDbStorage)
+      if (storagePluginId && storagePluginId !== "anonymous") {
+        void tauriInvoke("save_otools_plugin_localstate_with_scheme", {
+          plugin: storagePluginId,
+          scheme: "dbStorage",
+          state: {},
+        }).catch(() => {})
+      }
+    },
+  }
+  const createCompatDocumentId = () =>
+    window.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const readCompatDocument = (id) =>
+    readCompatStorageValue(dbDocumentPrefix, memoryDbDocuments, toStringSafe(id))
+  const writeCompatDocument = (doc) => {
+    const record = doc && typeof doc === "object" ? { ...doc } : {}
+    const id = toStringSafe(record._id || record.id || createCompatDocumentId())
+    const rev = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const stored = {
+      ...record,
+      _id: id,
+      _rev: rev,
+    }
+    writeCompatStorageValue(dbDocumentPrefix, memoryDbDocuments, id, stored)
+    return { ok: true, id, rev }
+  }
+  const removeCompatDocument = (docOrId) => {
+    const record = docOrId && typeof docOrId === "object" ? docOrId : {}
+    const id = toStringSafe(
+      typeof docOrId === "string" ? docOrId : record._id || record.id || ""
+    )
+    if (!id) {
+      return { ok: false, error: "missing_id" }
+    }
+    const existing = readCompatDocument(id)
+    const existingRecord =
+      existing && typeof existing === "object" ? existing : {}
+    removeCompatStorageValue(dbDocumentPrefix, memoryDbDocuments, id)
+    return { ok: true, id, rev: toStringSafe(existingRecord._rev) }
+  }
+  const allCompatDocuments = () => {
+    const rows = listCompatStorageKeys(dbDocumentPrefix, memoryDbDocuments).map(
+      (id) => {
+        const doc = readCompatDocument(id)
+        const record = doc && typeof doc === "object" ? doc : {}
+        return {
+          id,
+          key: id,
+          value: { rev: record._rev ?? null },
+          doc: record,
+        }
+      }
+    )
+    return {
+      total_rows: rows.length,
+      offset: 0,
+      rows,
+    }
+  }
+  const createCompatChangesFeed = () => {
+    const feed = {
+      on() {
+        return feed
+      },
+      once() {
+        return feed
+      },
+      off() {
+        return feed
+      },
+      cancel() {},
+    }
+    return feed
+  }
+  const createCompatReplicationResult = () => ({
+    ok: true,
+    docs_read: 0,
+    docs_written: 0,
+    doc_write_failures: 0,
+    errors: [],
+  })
+  const compatDb = {
+    get: (id) => readCompatDocument(id),
+    put: (doc) => writeCompatDocument(doc),
+    post: (doc) => writeCompatDocument(doc),
+    remove: (docOrId) => removeCompatDocument(docOrId),
+    bulkDocs: (docsOrRequest) => {
+      const docs = Array.isArray(docsOrRequest)
+        ? docsOrRequest
+        : Array.isArray(docsOrRequest?.docs)
+          ? docsOrRequest.docs
+          : []
+      return docs.map((doc) => writeCompatDocument(doc))
+    },
+    allDocs: () => allCompatDocuments(),
+    changes: () => createCompatChangesFeed(),
+    compact: () => ({ ok: true }),
+    info: () => ({
+      db_name: storagePluginId,
+      doc_count: allCompatDocuments().total_rows,
+      update_seq: 0,
+    }),
+  }
+  compatDb.replicate = {
+    from: async () => createCompatReplicationResult(),
+    to: async () => createCompatReplicationResult(),
+    sync: async () => createCompatReplicationResult(),
+  }
+  compatDb.promises = {
+    get: async (id) => compatDb.get(id),
+    put: async (doc) => compatDb.put(doc),
+    post: async (doc) => compatDb.post(doc),
+    remove: async (docOrId) => compatDb.remove(docOrId),
+    bulkDocs: async (docsOrRequest) => compatDb.bulkDocs(docsOrRequest),
+    allDocs: async () => compatDb.allDocs(),
+    changes: async () => compatDb.changes(),
+    compact: async () => compatDb.compact(),
+    info: async () => compatDb.info(),
+  }
+  const featureRecords = []
+  const getFeatures = () =>
+    featureRecords.map((feature) =>
+      feature && typeof feature === "object" ? { ...feature } : feature
+    )
+  const setFeature = (feature) => {
+    const record = feature && typeof feature === "object" ? { ...feature } : {}
+    const code = toStringSafe(record.code || record.cmd || record.id).trim()
+    if (code) {
+      const existingIndex = featureRecords.findIndex((item) => {
+        const itemRecord = item && typeof item === "object" ? item : {}
+        return (
+          toStringSafe(itemRecord.code || itemRecord.cmd || itemRecord.id) === code
+        )
+      })
+      if (existingIndex >= 0) {
+        featureRecords.splice(existingIndex, 1, record)
+      } else {
+        featureRecords.push(record)
+      }
+    } else {
+      featureRecords.push(feature)
+    }
+    window.dispatchEvent(
+      new CustomEvent("otools:features-changed", { detail: getFeatures() })
+    )
+    void tauriInvoke("set_feature", { feature }).catch(() => {})
+    return true
+  }
+  const removeFeature = (code) => {
+    const target = toStringSafe(code).trim()
+    const existingIndex = featureRecords.findIndex((item) => {
+      const record = item && typeof item === "object" ? item : {}
+      return toStringSafe(record.code || record.cmd || record.id) === target
+    })
+    if (existingIndex >= 0) {
+      featureRecords.splice(existingIndex, 1)
+    }
+    window.dispatchEvent(
+      new CustomEvent("otools:features-changed", { detail: getFeatures() })
+    )
+    void tauriInvoke("remove_feature", { code: target }).catch(() => {})
+    return existingIndex >= 0
+  }
+  const defaultEnterAction = {
+    code: "",
+    type: "",
+    payload: null,
+    option: null,
+  }
+  const initialEnterAction = (() => {
+    const explicit = normalizeEnterAction(config.enterAction, defaultEnterAction)
+    if (explicit.code || explicit.type || explicit.payload || explicit.option) {
+      return explicit
+    }
+    try {
+      const params = new URLSearchParams(window.location.search || "")
+      return normalizeEnterAction(
+        {
+          code:
+            params.get("code") ||
+            params.get("cmd") ||
+            params.get("featureCode") ||
+            params.get("feature") ||
+            "",
+          type: params.get("type") || "",
+          payload: readJsonParam(params.get("payload") || params.get("text")),
+          option: readJsonParam(params.get("option")),
+        },
+        defaultEnterAction
+      )
+    } catch {
+      return explicit
+    }
+  })()
+  let currentEnterAction = initialEnterAction
+  const pluginReadyHandlers = new Set()
+  const pluginEnterHandlers = new Set()
+  const pluginOutHandlers = new Set()
+  const dbPullHandlers = new Set()
+  const currentPluginEnterAction = () => ({ ...currentEnterAction })
+  window.addEventListener("otools:plugin-enter", (event) => {
+    const action = normalizeEnterAction(event.detail, currentPluginEnterAction())
+    currentEnterAction = action
+    pluginEnterHandlers.forEach((handler) => handler(action))
+  })
+  window.addEventListener("otools:plugin-out", () => {
+    pluginOutHandlers.forEach((handler) => handler())
+  })
+  window.addEventListener("otools:db-pull", (event) => {
+    dbPullHandlers.forEach((handler) => handler(event.detail))
+  })
+  let subInputCallback = null
+  let subInputValue = ""
+  const buildSubInputEvent = (value) => ({
+    text: value,
+    value,
+    toString: () => value,
+  })
+  const setSubInputValue = (value) => {
+    subInputValue = readSubInputText(value)
+    window.dispatchEvent(
+      new CustomEvent("otools:set-sub-input-value", {
+        detail: { value: subInputValue },
+      })
+    )
+    if (typeof subInputCallback === "function") {
+      subInputCallback(buildSubInputEvent(subInputValue))
+    }
+    return true
+  }
+  window.addEventListener("otools:sub-input-change", (event) => {
+    setSubInputValue(event.detail)
+  })
+  const isDarkColors = () => {
+    const root = document.documentElement
+    if (
+      root.classList.contains("dark") ||
+      root.dataset.theme === "dark" ||
+      root.dataset.colorMode === "dark"
+    ) {
+      return true
+    }
+    return (
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+    )
+  }
+  const createCompatUBrowserChain = () => {
+    const steps = []
+    let resultValue = null
+    let chain = null
+    chain = new Proxy(
+      {},
+      {
+        get(_target, prop) {
+          if (prop === Symbol.toStringTag) {
+            return "OToolsCompatUBrowser"
+          }
+          if (prop === "then") {
+            return undefined
+          }
+          if (prop === "steps") {
+            return steps
+          }
+          if (prop === "run") {
+            return async (options) => {
+              window.dispatchEvent(
+                new CustomEvent("otools:ubrowser-run", {
+                  detail: { steps, options },
+                })
+              )
+              return resultValue
+            }
+          }
+          if (prop === "end" || prop === "close" || prop === "destroy") {
+            return async () => {
+              steps.splice(0, steps.length)
+              return true
+            }
+          }
+          return (...args) => {
+            const method = toStringSafe(prop)
+            steps.push({ method, args })
+            if (method === "evaluate" && typeof args[0] === "function") {
+              try {
+                resultValue = args[0]()
+              } catch {
+                resultValue = null
+              }
+            }
+            return chain
+          }
+        },
+      }
+    )
+    return chain
+  }
+  const ubrowser = new Proxy(() => createCompatUBrowserChain(), {
+    apply() {
+      return createCompatUBrowserChain()
+    },
+    get(_target, prop) {
+      if (prop === Symbol.toStringTag) {
+        return "OToolsCompatUBrowserFactory"
+      }
+      if (prop === "then") {
+        return undefined
+      }
+      if (prop === "create" || prop === "new") {
+        return () => createCompatUBrowserChain()
+      }
+      const chain = createCompatUBrowserChain()
+      return Reflect.get(chain, prop)
+    },
+  })
   const runtimeInfo = {
-    isNoder: false,
+    get isNoder() {
+      return Boolean(resolveNoderRuntime())
+    },
     isNativeTauri: config.useTauriAssetProtocol === true,
     hasHostBridge: true,
     platform: currentPlatform,
@@ -4423,7 +4998,7 @@ function otoolsCompatBootstrap(config: {
     appVersion: toStringSafe(env.appVersion || ""),
     pluginUuid: resolvePluginUuid(pluginUuid),
     env,
-    permissionsRestricted: permissions.length > 0,
+    permissionsRestricted,
     permissions,
     hasPermission,
     versions: {
@@ -4441,7 +5016,9 @@ function otoolsCompatBootstrap(config: {
     childProcess: null,
     require: nodeRequire,
     createRequire,
-    builtinModules: [],
+    get builtinModules() {
+      return readNoderBuiltinModules()
+    },
   }
 
   const baseApi = {
@@ -4455,6 +5032,176 @@ function otoolsCompatBootstrap(config: {
     childProcess: null,
     require: nodeRequire,
     createRequire,
+    dbStorage,
+    db: compatDb,
+    showMainWindow() {
+      void tauriInvoke("show_main_window", {}).catch(() => {
+        window.focus()
+      })
+    },
+    hideMainWindow() {
+      void tauriInvoke("hide_main_window", {}).catch(() => {
+        try {
+          window.blur()
+        } catch {}
+      })
+    },
+    outPlugin() {
+      void tauriInvoke("hide_main_window", {}).catch(() => {
+        try {
+          window.close()
+        } catch {}
+      })
+    },
+    setExpendHeight(height) {
+      const value = Number(height)
+      if (Number.isFinite(value)) {
+        document.body.style.minHeight = `${Math.max(0, Math.round(value))}px`
+      }
+      void tauriInvoke("set_expend_height", { height: value }).catch(() => {})
+    },
+    isDarkColors,
+    isDarkMode: isDarkColors,
+    getUser() {
+      return null
+    },
+    fetchUser() {
+      return Promise.resolve(null)
+    },
+    fetchUserServerTemporaryToken() {
+      return Promise.resolve(null)
+    },
+    isPurchasedUser() {
+      return false
+    },
+    userPayments() {
+      return []
+    },
+    screenColorPick(callback) {
+      if (typeof callback === "function") {
+        queueMicrotask(() => callback(null))
+      }
+      return Promise.resolve(null)
+    },
+    simulateKeyboardTap() {
+      return false
+    },
+    simulateKeyboard() {
+      return false
+    },
+    simulateMouseClick() {
+      return false
+    },
+    getCursorScreenPoint() {
+      return { x: 0, y: 0 }
+    },
+    getSubInputValue() {
+      return subInputValue
+    },
+    getIdleUBrowser() {
+      return null
+    },
+    getIdleUBrowsers() {
+      return []
+    },
+    ubrowser,
+    getEnterAction() {
+      return currentPluginEnterAction()
+    },
+    onPluginReady(callback) {
+      if (typeof callback === "function") {
+        pluginReadyHandlers.add(callback)
+        queueMicrotask(callback)
+      }
+    },
+    onDbPull(callback) {
+      if (typeof callback === "function") {
+        dbPullHandlers.add(callback)
+      }
+    },
+    getFeatures,
+    setFeature,
+    removeFeature,
+    redirect(label, payload) {
+      const code = toStringSafe(label).trim()
+      const action = normalizeEnterAction(
+        { code, payload: payload ?? null },
+        currentPluginEnterAction()
+      )
+      currentEnterAction = action
+      window.dispatchEvent(
+        new CustomEvent("otools:redirect", {
+          detail: { code, payload: payload ?? null },
+        })
+      )
+      pluginEnterHandlers.forEach((handler) => handler(action))
+      void tauriInvoke("redirect", { code, payload: payload ?? null }).catch(
+        () => {}
+      )
+      return true
+    },
+    setSubInput(callbackOrOptions, placeholder, isFocus) {
+      const options =
+        callbackOrOptions && typeof callbackOrOptions === "object"
+          ? callbackOrOptions
+          : {}
+      const callback =
+        typeof callbackOrOptions === "function"
+          ? callbackOrOptions
+          : options.onChange || options.callback || options.search
+      subInputCallback = typeof callback === "function" ? callback : null
+      window.dispatchEvent(
+        new CustomEvent("otools:set-sub-input", {
+          detail: {
+            placeholder: toStringSafe(
+              placeholder ?? options.placeholder ?? options.text
+            ),
+            isFocus: isFocus ?? options.isFocus ?? options.focus ?? true,
+            value: subInputValue,
+          },
+        })
+      )
+      return true
+    },
+    removeSubInput() {
+      subInputCallback = null
+      subInputValue = ""
+      window.dispatchEvent(new CustomEvent("otools:remove-sub-input"))
+      return true
+    },
+    hideSubInput() {
+      subInputCallback = null
+      subInputValue = ""
+      window.dispatchEvent(new CustomEvent("otools:remove-sub-input"))
+      return true
+    },
+    setSubInputValue,
+    onPluginEnter(callback) {
+      if (typeof callback !== "function") {
+        return
+      }
+      pluginEnterHandlers.add(callback)
+      queueMicrotask(() => callback(currentPluginEnterAction()))
+    },
+    onPluginOut(callback) {
+      if (typeof callback === "function") {
+        pluginOutHandlers.add(callback)
+      }
+    },
+    showOpenDialog(options, callback) {
+      const result = dialog.open(options && typeof options === "object" ? options : {})
+      if (typeof callback === "function") {
+        void result.then(callback)
+      }
+      return result
+    },
+    showSaveDialog(options, callback) {
+      const result = dialog.save(options && typeof options === "object" ? options : {})
+      if (typeof callback === "function") {
+        void result.then(callback)
+      }
+      return result
+    },
     listHostDir(path) {
       const target = toStringSafe(path).trim()
       if (!target) {
@@ -4651,6 +5398,9 @@ function otoolsCompatBootstrap(config: {
       return Boolean(env.isDev)
     },
     isMacOS() {
+      return currentPlatform === "macos"
+    },
+    isMacOs() {
       return currentPlatform === "macos"
     },
     isWindows() {

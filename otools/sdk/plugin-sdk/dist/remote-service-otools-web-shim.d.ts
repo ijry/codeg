@@ -5,10 +5,16 @@ export type OtoolsWebRuntimeOptions = {
     appName?: string;
     appVersion?: string;
     baseUrl?: string;
+    currentBrowserUrl?: string;
+    currentFolderPath?: string;
+    enterAction?: unknown;
     eventClient?: ReturnType<typeof createOtoolsNativeEventClient>;
     fetchImpl?: typeof fetch;
     isDev?: boolean;
+    nativeId?: string;
+    paths?: Record<string, string>;
     platform?: OToolsPlatform | string;
+    pluginPermissions?: string[];
     pluginUuid?: string;
     postJson?: PostJson;
     token?: string;

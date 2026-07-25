@@ -347,6 +347,7 @@ pub struct IsSshConnectedParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UuidParams {
+    #[serde(alias = "plugin_uuid", alias = "pluginUuid", alias = "plugin")]
     pub uuid: String,
     #[serde(rename = "intervalMs", alias = "interval_ms")]
     pub interval_ms: Option<u64>,
@@ -419,6 +420,7 @@ pub struct NativeBuildJobParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeEnabledParams {
+    #[serde(alias = "plugin_uuid", alias = "pluginUuid", alias = "plugin")]
     pub uuid: String,
     pub enabled: bool,
 }
@@ -551,6 +553,31 @@ pub async fn show_main_window(
     );
     otools::otools_show_main_window_core();
     Ok(Json(()))
+}
+
+pub async fn otools_hide_main_window(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<()>, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    if let Some(app) = desktop_app_handle(&state) {
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.hide();
+        }
+        return Ok(Json(()));
+    }
+
+    crate::web::event_bridge::emit_event(
+        &state.emitter,
+        "otools-hide-main-window",
+        serde_json::json!({ "ok": true }),
+    );
+    Ok(Json(()))
+}
+
+pub async fn hide_main_window(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<()>, AppCommandError> {
+    otools_hide_main_window(Extension(state)).await
 }
 
 pub async fn enable_remote_ui(

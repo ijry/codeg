@@ -1,5 +1,6 @@
 export type OtoolsNativeEvent = {
   payload: {
+    pluginUuid?: string;
     topic?: string;
     payload?: unknown;
   };
@@ -121,11 +122,15 @@ export function createOtoolsNativeEventClient({
 
       const payload = readEventPayload(message);
       for (const handler of handlers.values()) {
+        const body =
+          payload && typeof payload === "object"
+            ? (payload as OtoolsNativeEvent["payload"])
+            : { payload };
         void handler({
-          payload:
-            payload && typeof payload === "object"
-              ? (payload as OtoolsNativeEvent["payload"])
-              : { payload },
+          payload: {
+            ...body,
+            pluginUuid,
+          },
         });
       }
     };

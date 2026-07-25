@@ -64,6 +64,71 @@
       "import": "./dist/dialog.js",
       "default": "./dist/dialog.js"
     },
+    "./electron-shim": {
+      "types": "./dist/electron-shim.d.ts",
+      "import": "./dist/electron-shim.js",
+      "default": "./dist/electron-shim.js"
+    },
+    "./electron-remote-shim": {
+      "types": "./dist/electron-remote-shim.d.ts",
+      "import": "./dist/electron-remote-shim.js",
+      "default": "./dist/electron-remote-shim.js"
+    },
+    "./electron-remote-main-shim": {
+      "types": "./dist/electron-remote-main-shim.d.ts",
+      "import": "./dist/electron-remote-main-shim.js",
+      "default": "./dist/electron-remote-main-shim.js"
+    },
+    "./node-buffer-shim": {
+      "types": "./dist/node-buffer-shim.d.ts",
+      "import": "./dist/node-buffer-shim.js",
+      "default": "./dist/node-buffer-shim.js"
+    },
+    "./node-events-shim": {
+      "types": "./dist/node-events-shim.d.ts",
+      "import": "./dist/node-events-shim.js",
+      "default": "./dist/node-events-shim.js"
+    },
+    "./node-os-shim": {
+      "types": "./dist/node-os-shim.d.ts",
+      "import": "./dist/node-os-shim.js",
+      "default": "./dist/node-os-shim.js"
+    },
+    "./node-path-shim": {
+      "types": "./dist/node-path-shim.d.ts",
+      "import": "./dist/node-path-shim.js",
+      "default": "./dist/node-path-shim.js"
+    },
+    "./node-path-posix-shim": {
+      "types": "./dist/node-path-posix-shim.d.ts",
+      "import": "./dist/node-path-posix-shim.js",
+      "default": "./dist/node-path-posix-shim.js"
+    },
+    "./node-path-win32-shim": {
+      "types": "./dist/node-path-win32-shim.d.ts",
+      "import": "./dist/node-path-win32-shim.js",
+      "default": "./dist/node-path-win32-shim.js"
+    },
+    "./node-process-shim": {
+      "types": "./dist/node-process-shim.d.ts",
+      "import": "./dist/node-process-shim.js",
+      "default": "./dist/node-process-shim.js"
+    },
+    "./node-querystring-shim": {
+      "types": "./dist/node-querystring-shim.d.ts",
+      "import": "./dist/node-querystring-shim.js",
+      "default": "./dist/node-querystring-shim.js"
+    },
+    "./node-util-shim": {
+      "types": "./dist/node-util-shim.d.ts",
+      "import": "./dist/node-util-shim.js",
+      "default": "./dist/node-util-shim.js"
+    },
+    "./node-util-types-shim": {
+      "types": "./dist/node-util-types-shim.d.ts",
+      "import": "./dist/node-util-types-shim.js",
+      "default": "./dist/node-util-types-shim.js"
+    },
     "./tauri-api-shim": {
       "types": "./dist/tauri-api-shim.d.ts",
       "import": "./dist/tauri-api-shim.js",

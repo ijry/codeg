@@ -1,5 +1,6 @@
 export type OtoolsNativeEvent = {
     payload: {
+        pluginUuid?: string;
         topic?: string;
         payload?: unknown;
     };

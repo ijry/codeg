@@ -1,0 +1,47 @@
+import { basename as fallbackBasename, dirname as fallbackDirname, extname as fallbackExtname, isAbsolutePath, joinPath, normalizePath, relativePath, resolvePath } from './node-compat-core';
+export type PathModule = {
+    basename: typeof fallbackBasename;
+    delimiter: string;
+    dirname: typeof fallbackDirname;
+    extname: typeof fallbackExtname;
+    format: (pathObject: Record<string, unknown>) => string;
+    isAbsolute: typeof isAbsolutePath;
+    join: typeof joinPath;
+    normalize: typeof normalizePath;
+    parse: (path: unknown) => {
+        root: string;
+        dir: string;
+        base: string;
+        ext: string;
+        name: string;
+    };
+    posix?: PathModule;
+    relative: typeof relativePath;
+    resolve: typeof resolvePath;
+    sep: string;
+    toNamespacedPath: (path: unknown) => string;
+    win32?: PathModule;
+};
+declare const pathProxy: PathModule;
+export declare const basename: (...args: Parameters<PathModule["basename"]>) => string;
+export declare const delimiter: string;
+export declare const dirname: (...args: Parameters<PathModule["dirname"]>) => string;
+export declare const extname: (...args: Parameters<PathModule["extname"]>) => string;
+export declare const format: (...args: Parameters<PathModule["format"]>) => string;
+export declare const isAbsolute: (...args: Parameters<PathModule["isAbsolute"]>) => boolean;
+export declare const join: (...args: Parameters<PathModule["join"]>) => string;
+export declare const normalize: (...args: Parameters<PathModule["normalize"]>) => string;
+export declare const parse: (...args: Parameters<PathModule["parse"]>) => {
+    root: string;
+    dir: string;
+    base: string;
+    ext: string;
+    name: string;
+};
+export declare const posix: PathModule;
+export declare const relative: (...args: Parameters<PathModule["relative"]>) => string;
+export declare const resolve: (...args: Parameters<PathModule["resolve"]>) => string;
+export declare const sep: string;
+export declare const toNamespacedPath: (...args: Parameters<PathModule["toNamespacedPath"]>) => string;
+export declare const win32: PathModule;
+export default pathProxy;

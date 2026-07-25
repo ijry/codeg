@@ -1,0 +1,22 @@
+import { default as path } from './node-path-shim';
+declare const winPath: import('./node-path-shim').PathModule;
+export declare const basename: (...args: Parameters<typeof path.basename>) => string;
+export declare const delimiter: string;
+export declare const dirname: (...args: Parameters<typeof path.dirname>) => string;
+export declare const extname: (...args: Parameters<typeof path.extname>) => string;
+export declare const format: (...args: Parameters<typeof path.format>) => string;
+export declare const isAbsolute: (...args: Parameters<typeof path.isAbsolute>) => boolean;
+export declare const join: (...args: Parameters<typeof path.join>) => string;
+export declare const normalize: (...args: Parameters<typeof path.normalize>) => string;
+export declare const parse: (...args: Parameters<typeof path.parse>) => {
+    root: string;
+    dir: string;
+    base: string;
+    ext: string;
+    name: string;
+};
+export declare const relative: (...args: Parameters<typeof path.relative>) => string;
+export declare const resolve: (...args: Parameters<typeof path.resolve>) => string;
+export declare const sep: string;
+export declare const toNamespacedPath: (...args: Parameters<typeof path.toNamespacedPath>) => string;
+export default winPath;

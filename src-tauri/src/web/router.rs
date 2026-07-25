@@ -281,8 +281,22 @@ pub fn build_router(
             "/otools_show_main_window",
             post(handlers::otools::otools_show_main_window),
         )
-        .route("/show_main_window", post(handlers::otools::show_main_window))
-        .route("/enable_remote_ui", post(handlers::otools::enable_remote_ui))
+        .route(
+            "/show_main_window",
+            post(handlers::otools::show_main_window),
+        )
+        .route(
+            "/otools_hide_main_window",
+            post(handlers::otools::otools_hide_main_window),
+        )
+        .route(
+            "/hide_main_window",
+            post(handlers::otools::hide_main_window),
+        )
+        .route(
+            "/enable_remote_ui",
+            post(handlers::otools::enable_remote_ui),
+        )
         .route(
             "/disable_remote_ui",
             post(handlers::otools::disable_remote_ui),
@@ -1821,6 +1835,7 @@ pub fn build_router(
 
     // WebSocket route (auth via Sec-WebSocket-Protocol)
     let ws_route = Router::new()
+        .route("/ws", get(ws::ws_handler))
         .route("/ws/events", get(ws::ws_handler))
         .layer(middleware::from_fn(move |req, next| {
             auth::require_token(req, next, token_for_ws.clone())

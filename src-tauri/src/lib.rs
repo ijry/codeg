@@ -1068,6 +1068,10 @@ mod tauri_app {
                 #[cfg(feature = "tauri-runtime")]
                 otools_commands::show_main_window,
                 #[cfg(feature = "tauri-runtime")]
+                otools_commands::otools_hide_main_window,
+                #[cfg(feature = "tauri-runtime")]
+                otools_commands::hide_main_window,
+                #[cfg(feature = "tauri-runtime")]
                 otools_commands::enable_remote_ui,
                 #[cfg(feature = "tauri-runtime")]
                 otools_commands::disable_remote_ui,

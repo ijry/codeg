@@ -8,6 +8,7 @@ type RuntimeListener = {
   handlerId?: number;
 };
 type NativeEnvelope = {
+  pluginUuid?: string;
   topic: string;
   payload: unknown;
 };
@@ -45,21 +46,45 @@ function normalizeEnvelope(event: unknown): NativeEnvelope | null {
   if (typeof topic !== "string" || !topic) {
     return null;
   }
+  const pluginUuid =
+    (raw as { pluginUuid?: unknown }).pluginUuid ??
+    (raw as { plugin_uuid?: unknown }).plugin_uuid ??
+    (raw as { uuid?: unknown }).uuid;
 
   return {
+    pluginUuid:
+      typeof pluginUuid === "string" && pluginUuid.trim()
+        ? pluginUuid.trim()
+        : undefined,
     topic,
     payload: (raw as { payload?: unknown }).payload ?? null,
   };
 }
 
 function dispatchNativeEnvelope(envelope: NativeEnvelope) {
-  const listeners = topicBuckets.get(envelope.topic);
-  if (!listeners) {
+  const topicListeners = topicBuckets.get(envelope.topic);
+  if (topicListeners) {
+    for (const listener of topicListeners.values()) {
+      void listener(envelope.payload);
+    }
+  }
+
+  if (!envelope.pluginUuid) {
     return;
   }
 
-  for (const listener of listeners.values()) {
-    void listener(envelope.payload);
+  const nativeEventListeners = topicBuckets.get(
+    `otools-native:${envelope.pluginUuid}`,
+  );
+  if (!nativeEventListeners) {
+    return;
+  }
+
+  for (const listener of nativeEventListeners.values()) {
+    void listener({
+      topic: envelope.topic,
+      payload: envelope.payload,
+    });
   }
 }
 

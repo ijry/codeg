@@ -1,95 +1,110 @@
-const c = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Map(), a = /* @__PURE__ */ new Map(), o = /* @__PURE__ */ new Map();
-let b = 0, f = 0, i = null;
-function d() {
+const u = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Map(), c = /* @__PURE__ */ new Map(), s = /* @__PURE__ */ new Map();
+let g = 0, f = 0, o = null;
+function y() {
   if (!(typeof window > "u"))
     return window.otools ?? window.utools;
 }
-function g(t) {
-  const e = t && typeof t == "object" && "payload" in t ? t.payload : t;
-  if (!e || typeof e != "object")
+function b(t) {
+  const n = t && typeof t == "object" && "payload" in t ? t.payload : t;
+  if (!n || typeof n != "object")
     return null;
-  const n = e.topic;
-  return typeof n != "string" || !n ? null : {
-    topic: n,
-    payload: e.payload ?? null
+  const e = n.topic;
+  if (typeof e != "string" || !e)
+    return null;
+  const i = n.pluginUuid ?? n.plugin_uuid ?? n.uuid;
+  return {
+    pluginUuid: typeof i == "string" && i.trim() ? i.trim() : void 0,
+    topic: e,
+    payload: n.payload ?? null
   };
 }
-function _(t) {
-  const e = o.get(t.topic);
+function m(t) {
+  const n = s.get(t.topic);
+  if (n)
+    for (const i of n.values())
+      i(t.payload);
+  if (!t.pluginUuid)
+    return;
+  const e = s.get(
+    `otools-native:${t.pluginUuid}`
+  );
   if (e)
-    for (const n of e.values())
-      n(t.payload);
+    for (const i of e.values())
+      i({
+        topic: t.topic,
+        payload: t.payload
+      });
 }
 async function p() {
-  if (i)
-    return i;
-  const t = d();
-  return t?.listenNative ? (i = t.listenNative((e) => {
-    const n = g(e);
-    n && _(n);
-  }), i) : (i = Promise.resolve(async () => {
-  }), i);
+  if (o)
+    return o;
+  const t = y();
+  return t?.listenNative ? (o = t.listenNative((n) => {
+    const e = b(n);
+    e && m(e);
+  }), o) : (o = Promise.resolve(async () => {
+  }), o);
 }
-async function m() {
-  if (o.size > 0 || !i)
+async function _() {
+  if (s.size > 0 || !o)
     return;
-  const t = await i;
-  i = null, await t();
-}
-function N(t) {
-  const e = r.get(t) ?? 0;
-  r.set(t, e + 1);
+  const t = await o;
+  o = null, await t();
 }
 function v(t) {
-  const e = r.get(t);
-  if (!e || e <= 1) {
-    r.delete(t), c.delete(t);
+  const n = r.get(t) ?? 0;
+  r.set(t, n + 1);
+}
+function N(t) {
+  const n = r.get(t);
+  if (!n || n <= 1) {
+    r.delete(t), u.delete(t);
     return;
   }
-  r.set(t, e - 1);
+  r.set(t, n - 1);
 }
 function l() {
   if (typeof window > "u" || typeof window.__TAURI_EVENT_PLUGIN_INTERNALS__?.unregisterListener == "function")
     return;
-  const e = {
-    unregisterListener(n, s) {
-      w(s);
+  const n = {
+    unregisterListener(e, i) {
+      d(i);
     }
   };
-  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = e;
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = n;
 }
-function T(t, e = !1) {
+function L(t, n = !1) {
   l();
-  const n = ++b;
-  return c.set(n, { callback: t, once: e }), n;
+  const e = ++g;
+  return u.set(e, { callback: t, once: n }), e;
 }
-async function k(t, e) {
+async function T(t, n) {
   l();
-  const n = ++f, s = o.get(t) ?? /* @__PURE__ */ new Map();
-  return s.set(n, (y) => {
-    const u = c.get(e);
-    u && (u.callback({ payload: y }), u.once && (c.delete(e), r.delete(e)));
-  }), o.set(t, s), a.set(n, { topic: t, handlerId: e }), N(e), await p(), n;
+  const e = ++f, i = s.get(t) ?? /* @__PURE__ */ new Map();
+  return i.set(e, (w) => {
+    const a = u.get(n);
+    a && (a.callback({ payload: w }), a.once && (u.delete(n), r.delete(n)));
+  }), s.set(t, i), c.set(e, { topic: t, handlerId: n }), v(n), await p(), e;
 }
-async function w(t) {
-  const e = a.get(t);
-  if (!e)
+async function d(t) {
+  const n = c.get(t);
+  if (!n)
     return;
-  a.delete(t);
-  const n = o.get(e.topic);
-  n?.delete(t), n && n.size === 0 && o.delete(e.topic), typeof e.handlerId == "number" && v(e.handlerId), await m();
+  c.delete(t);
+  const e = s.get(n.topic);
+  e?.delete(t), e && e.size === 0 && s.delete(n.topic), typeof n.handlerId == "number" && N(n.handlerId), await _();
 }
-async function L(t, e) {
+async function k(t, n) {
   l();
-  const n = ++f, s = o.get(t) ?? /* @__PURE__ */ new Map();
-  return s.set(n, e), o.set(t, s), a.set(n, { topic: t }), await p(), async () => {
-    await w(n);
+  const e = ++f, i = s.get(t) ?? /* @__PURE__ */ new Map();
+  return i.set(e, n), s.set(t, i), c.set(e, { topic: t }), await p(), async () => {
+    await d(e);
   };
 }
 export {
-  k as attachTransformListener,
-  w as detachTransformListener,
-  L as listenNativeTopic,
-  T as registerTransformCallback
+  T as attachTransformListener,
+  d as detachTransformListener,
+  k as listenNativeTopic,
+  L as registerTransformCallback
 };
 //# sourceMappingURL=native-event-bridge.js.map

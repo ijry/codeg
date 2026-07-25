@@ -1,0 +1,22 @@
+type ProcessLike = {
+    argv: string[];
+    browser?: boolean;
+    cwd: () => string;
+    env: Record<string, string | undefined>;
+    nextTick: (callback: (...args: unknown[]) => void, ...args: unknown[]) => void;
+    platform: string;
+    release?: Record<string, unknown>;
+    title?: string;
+    versions: Record<string, string>;
+};
+declare const processProxy: ProcessLike;
+export declare const argv: string[];
+export declare const browser = true;
+export declare const cwd: () => string;
+export declare const env: Record<string, string | undefined>;
+export declare const nextTick: (callback: (...args: unknown[]) => void, ...args: unknown[]) => void;
+export declare const platform: string;
+export declare const release: Record<string, unknown> | undefined;
+export declare const title: string | undefined;
+export declare const versions: Record<string, string>;
+export default processProxy;

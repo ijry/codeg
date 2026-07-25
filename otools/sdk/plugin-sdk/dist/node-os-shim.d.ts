@@ -1,0 +1,27 @@
+export declare const EOL: string;
+export declare const arch: () => string;
+export declare const cpus: () => unknown[];
+export declare const endianness: () => string;
+export declare const freemem: () => number;
+export declare const homedir: () => string;
+export declare const hostname: () => string;
+export declare const platform: () => string;
+export declare const release: () => string;
+export declare const tmpdir: () => string;
+export declare const totalmem: () => number;
+export declare const type: () => string;
+declare const _default: {
+    EOL: string;
+    arch: () => string;
+    cpus: () => unknown[];
+    endianness: () => string;
+    freemem: () => number;
+    homedir: () => string;
+    hostname: () => string;
+    platform: () => string;
+    release: () => string;
+    tmpdir: () => string;
+    totalmem: () => number;
+    type: () => string;
+};
+export default _default;

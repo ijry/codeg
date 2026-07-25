@@ -1,6 +1,8 @@
 #[cfg(feature = "tauri-runtime")]
 use serde::Deserialize;
 use serde_json::{json, Value};
+#[cfg(feature = "tauri-runtime")]
+use tauri::Manager;
 
 use crate::app_error::{AppCommandError, AppErrorCode};
 
@@ -480,6 +482,21 @@ pub async fn otools_show_main_window(app: tauri::AppHandle) -> Result<(), AppCom
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), AppCommandError> {
     otools_show_main_window(app).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn otools_hide_main_window(app: tauri::AppHandle) -> Result<(), AppCommandError> {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.hide();
+    }
+    Ok(())
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn hide_main_window(app: tauri::AppHandle) -> Result<(), AppCommandError> {
+    otools_hide_main_window(app).await
 }
 
 #[cfg(feature = "tauri-runtime")]
